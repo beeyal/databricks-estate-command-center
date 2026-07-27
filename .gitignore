@@ -31,3 +31,4 @@ __pycache__/
 
 # transient test logs
 scratchpad/*.log
+scratchpad/combo_test.sh

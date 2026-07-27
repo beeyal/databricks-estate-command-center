@@ -33,7 +33,7 @@
 set -euo pipefail
 
 PROFILE="${DATABRICKS_PROFILE:-DEFAULT}"
-APP_NAME="${FINOPS_APP_NAME:-finops-command-center}"
+APP_NAME="${FINOPS_APP_NAME:-estate-command-center}"
 TARGET=""
 CUSTOMISE_FILE="customise.yaml"
 OVERRIDE_NO_AI="false"        # both AI features off (genie + narration)
@@ -247,7 +247,16 @@ databricks bundle deploy --profile "$PROFILE" ${TARGET_FLAG}
 echo "[3/3] Deploying + starting app…"
 WS_USER=$(databricks current-user me --profile "$PROFILE" --output json 2>/dev/null \
   | python3 -c 'import sys,json; print(json.load(sys.stdin).get("userName",""))')
-BUNDLE_FILES="/Workspace/Users/${WS_USER}/.bundle/finops-command-center/files"
+# The bundle root_path is .bundle/<bundle-name>/files for the DEFAULT (dev) target,
+# but .bundle/<bundle-name>/<target>/files for the customer / customer-lakebase
+# targets (they override root_path with a /<target> segment — see databricks.yml).
+# Derive the right path from the selected target so the app deploys from the files
+# the bundle actually synced.
+if [[ -n "$TARGET" && "$TARGET" != "dev" ]]; then
+  BUNDLE_FILES="/Workspace/Users/${WS_USER}/.bundle/estate-command-center/${TARGET}/files"
+else
+  BUNDLE_FILES="/Workspace/Users/${WS_USER}/.bundle/estate-command-center/files"
+fi
 databricks apps start "$APP_NAME" --profile "$PROFILE" 2>/dev/null || true
 databricks apps deploy "$APP_NAME" --source-code-path "$BUNDLE_FILES" --profile "$PROFILE"
 

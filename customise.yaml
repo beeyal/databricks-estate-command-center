@@ -117,7 +117,7 @@ ingest_schema: ""
 # two daily jobs via the Jobs API — no need to create them by hand in Workflows.
 # Leave BLANK for CLI/bundle deploys (the Asset Bundle creates the jobs). The app
 # SP needs job-management rights; job_run_as optionally runs them as an admin SP.
-# source_path: "/Workspace/Users/you@corp.com/finops-command-center"
+# source_path: "/Workspace/Users/you@corp.com/databricks-estate-command-center"
 source_path: ""
 job_run_as: ""
 
