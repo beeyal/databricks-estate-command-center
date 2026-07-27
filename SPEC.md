@@ -1,4 +1,4 @@
-# FinOps Command Center — Build Spec (original build blueprint)
+# Estate Command Center — Build Spec (original build blueprint)
 
 > ⚠️ **Historical build spec, not current-state docs.** This is the original
 > blueprint the app was built from; the shipped app has since moved on. Notably:
@@ -10,7 +10,7 @@
 > **docs/ARCHITECTURE.md**, **docs/DEPLOYMENT.md**, and **docs/SECURITY.md** —
 > those are the source of truth. This file is kept for design context.
 
-**Databricks-native cost-control co-pilot.** One stop shop that consolidates every cost/usage tool we've built (query observability, workspace health check, GenAI cost governance, cost-by-driver hub, consumption dashboards) into a single app with **access**, **workspace analysis**, **query advisor (AI)**, **storage/table optimization**, and **governance** — every recommendation gated to **Australia (australiaeast / ap-southeast-2) in-region availability**.
+**Databricks-native cost, governance & data-quality console.** One stop shop that consolidates every cost/usage tool we've built (query observability, workspace health check, GenAI cost governance, cost-by-driver hub, consumption dashboards) into a single app with **access**, **workspace analysis**, **query advisor (AI)**, **storage/table optimization**, and **governance** — every recommendation gated to **Australia (australiaeast / ap-southeast-2) in-region availability**.
 
 Every agent working on this repo MUST read this file first and conform to it. Match the **GridSense Intelligence Hub** design system and repo conventions (`~/projects/gridsense-intelligence-hub`).
 
@@ -26,7 +26,7 @@ Every agent working on this repo MUST read this file first and conform to it. Ma
 - CSS-var theming: `--color-surface`, `--color-card`, `--color-border`, `--color-brand-dark`, `--color-neutral`, `--color-accent`. Dark default.
 - **Palette for this app:** near-black surface `13 17 23`, card `22 27 34`, border `48 54 61` (GitHub-dark base, same as GridSense dark). Accent = Databricks red `255 54 33`. Semantic: success `#1B8A4A`, warning `#F59E0B`, danger `#C0392B`, info/purple `#8B5CF6`. Insight-type pill colors: cluster=teal, resize=purple, rewrite=blue, vacuum=amber, convert=red, enable-PO/LC=green.
 - Components: `.card`, `.pill`, KPI stat cards (icon + label + big number, colored left border by status), dense data tables with sortable columns, filter bar (time-range chips + dropdowns + search + threshold), status pills, progress bars (automated %, savings %), sparklines.
-- Layout: top nav bar (logo "FinOps Command Center" + page tabs + dark-mode toggle), each page = KPI row → filter bar → main table/detail. Reference the two screenshots: query observability (query table + AI insight column + KPI row + filters) and workspace health check (workspace table + KPI row + faceted filters + health/complexity/optimization pills).
+- Layout: top nav bar (logo "Estate Command Center" + page tabs + dark-mode toggle), each page = KPI row → filter bar → main table/detail. Reference the two screenshots: query observability (query table + AI insight column + KPI row + filters) and workspace health check (workspace table + KPI row + faceted filters + health/complexity/optimization pills).
 
 ## 3. Pages (nav tabs)
 
@@ -141,7 +141,7 @@ Centered title + badges (Databricks App / Stack / in-geo AU / Foundation Models)
 - **Specialist agents (iteration 2, parallel):** Access page · Workspaces page + drill-down · Query Advisor + recommender · Storage/Tables + savings engine · Governance page · In-geo matrix (verify + data) · README/ARCHITECTURE.
 - **Iterations 3–10:** build → run (Vite build + backend) → web-devloop-tester visual + console-error check → fix → repeat. Validate: no console errors, all pages render, filters work, tables sort, numbers reconcile to demo dataset, in-geo gating enforced, README accurate. Track issues in `SUBMISSION_TODO.md`.
 
-Naming: app title "FinOps Command Center", short "FinOps CC". British English in copy. No emoji section markers in the app UI (pills/icons OK).
+Naming: app title "Estate Command Center", short "Estate CC". British English in copy. No emoji section markers in the app UI (pills/icons OK).
 
 ## 9. Ideas folded in from cost-by-driver reference dashboard (2026-07-07)
 Incorporate these into the relevant pages (they validate the AU-East SKU framing — SKUs literally end in `_AUSTRALIA_EAST`):

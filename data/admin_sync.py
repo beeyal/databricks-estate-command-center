@@ -1,4 +1,4 @@
-"""Admin-API ingestion job for the FinOps Command Center.
+"""Admin-API ingestion job for the Estate Command Center.
 
 Everything the app needs that is NOT in the system tables comes from admin REST
 APIs (budgets, budget policies, cluster policies, PATs, alerts, SCIM groups,

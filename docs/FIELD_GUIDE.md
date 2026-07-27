@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛠 FinOps Command Center — Internal Field Guide
+# 🛠 Estate Command Center — Internal Field Guide
 
 **Stand up a demo in your own FEVM/workspace, then onboard a customer.**
 
@@ -41,13 +41,13 @@ built `frontend/dist` is committed, so **nothing compiles**.
 
 ```bash
 brew install databricks                                      # macOS (winget install Databricks.CLI on Windows)
-git clone https://github.com/beeyal/finops-command-center && cd finops-command-center
+git clone https://github.com/beeyal/databricks-estate-command-center && cd databricks-estate-command-center
 databricks auth login --profile <your-profile>                  # browser prompt, once
 ```
 
 **Or from inside the workspace:** top-right **Create ▾ → Git folder**, paste
-`https://github.com/beeyal/finops-command-center`, **Create**. The code lands at
-`/Workspace/Users/<you>/finops-command-center`.
+`https://github.com/beeyal/databricks-estate-command-center`, **Create**. The code lands at
+`/Workspace/Users/<you>/databricks-estate-command-center`.
 
 ### ② Deploy the bundle (dev target)
 
@@ -58,16 +58,16 @@ The `dev` target is the default and needs **no config edits** — demo mode is b
 
 ```bash
 databricks bundle deploy -t dev -p <your-profile>
-databricks bundle run   finops -t dev -p <your-profile>
+databricks bundle run   estate -t dev -p <your-profile>
 ```
 
 **Workspace notebook / web terminal** (`%sh` cell — replace `<you>` with your email):
 
 ```sh
 %sh
-cd /Workspace/Users/<you>/finops-command-center
+cd /Workspace/Users/<you>/databricks-estate-command-center
 databricks bundle deploy -t dev
-databricks bundle run   finops -t dev
+databricks bundle run   estate -t dev
 ```
 
 > [!TIP]

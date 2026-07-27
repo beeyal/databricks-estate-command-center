@@ -1,9 +1,9 @@
-"""Deploy-time provisioning for the FinOps Command Center.
+"""Deploy-time provisioning for the Estate Command Center.
 
 Most customers won't already have a Genie Space or a wired LLM endpoint, so the
 deployment provisions them so the AI features work out of the box:
 
-  • ensure_genie_space — creates a purpose-built "FinOps Command Center" Genie
+  • ensure_genie_space — creates a purpose-built "Estate Command Center" Genie
     Space over the billing/finops tables if one doesn't exist, and returns its id.
     The serialized_space schema was validated empirically against the Genie
     create API: {"version": 2, "data_sources": {"tables": [{"identifier": ...}]}}.
@@ -45,7 +45,7 @@ DEFAULT_GENIE_TABLES = [
     "system.lakeflow.job_run_timeline",
 ]
 
-GENIE_TITLE = "FinOps Command Center"
+GENIE_TITLE = "Estate Command Center"
 GENIE_DESCRIPTION = (
     "Ask cost, usage & operations questions over Databricks system tables — spend "
     "by workspace / SKU / product / user / month, plus SQL query history, jobs, "
@@ -101,7 +101,7 @@ def ensure_genie_space(warehouse_id: str, tables: list[str] | None = None,
         # before creating another.
         try:
             # Prefix match: the create API appends a timestamp to the title
-            # ("FinOps Command Center 2026-07-21 08:03:40"), so an exact-equals
+            # ("Estate Command Center 2026-07-21 08:03:40"), so an exact-equals
             # check never matched and every run created a new space.
             # list_spaces() returns a GenieListSpacesResponse (not iterable) —
             # read .spaces + follow next_page_token.

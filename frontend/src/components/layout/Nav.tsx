@@ -95,8 +95,8 @@ export function Nav({
   // Subtitle: the tagline, plus the configured customer name (FINOPS_CUSTOMER_NAME)
   // once /api/config resolves. Blank customer → just the tagline (no stale name).
   const subtitle = customer
-    ? `Databricks-native cost-control co-pilot · ${customer}`
-    : "Databricks-native cost-control co-pilot";
+    ? `Databricks-native cost, governance & data-quality console · ${customer}`
+    : "Databricks-native cost, governance & data-quality console";
   return (
     <header className="bg-card border-b border-border sticky top-0 z-40">
       <div className="max-w-[1500px] mx-auto px-6 pt-3">
@@ -104,7 +104,7 @@ export function Nav({
           <div className="flex items-center gap-2.5">
             <LogoMark />
             <div>
-              <h1 className="text-base font-semibold leading-tight tracking-tight">FinOps Command Center</h1>
+              <h1 className="text-base font-semibold leading-tight tracking-tight">Estate Command Center</h1>
               <p className="text-[11px] text-neutral leading-tight">{subtitle}</p>
             </div>
           </div>

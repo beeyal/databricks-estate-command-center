@@ -1,8 +1,8 @@
 <div align="center">
 
-# FinOps Command Center
+# Estate Command Center
 
-*Databricks-native cost-control co-pilot — one stop shop for cost, usage, access & governance across your estate.*
+*Databricks-native cost, governance & data-quality console — one stop shop for cost, usage, access & governance across your estate.*
 
 [![Databricks App](https://img.shields.io/badge/Databricks-App-FF3621?style=for-the-badge&logo=databricks&logoColor=white)](/)
 [![Stack](https://img.shields.io/badge/Stack-Databricks%20%7C%20React%20%7C%20FastAPI-1B3139?style=for-the-badge)](/)
@@ -21,7 +21,7 @@
 
 ---
 
-> **Disclaimer** — FinOps Command Center is a **field-built, open-source example**, **not an official Databricks product** and **not supported, endorsed, or maintained by Databricks**. It is provided **as-is, without warranty**, for you to review and adapt. It is **strictly read-only** over your `system.*` tables (it creates/modifies/deletes nothing in your lakehouse — see [Security](docs/SECURITY.md)). All savings/impact figures are **modeled estimates**; validate any recommendation independently before acting on it.
+> **Disclaimer** — Estate Command Center is a **field-built, open-source example**, **not an official Databricks product** and **not supported, endorsed, or maintained by Databricks**. It is provided **as-is, without warranty**, for you to review and adapt. It is **strictly read-only** over your `system.*` tables (it creates/modifies/deletes nothing in your lakehouse — see [Security](docs/SECURITY.md)). All savings/impact figures are **modeled estimates**; validate any recommendation independently before acting on it.
 
 ---
 
@@ -75,7 +75,7 @@
 
 ## What is it?
 
-**FinOps Command Center** is a full-stack Databricks App that gives a platform operator a single pane of glass over the cost, usage, access, and governance posture of an entire Databricks estate — and turns every finding into a **grounded, priority-ranked recommendation**.
+**Estate Command Center** is a full-stack Databricks App that gives a platform operator a single pane of glass over the cost, usage, access, and governance posture of an entire Databricks estate — and turns every finding into a **grounded, priority-ranked recommendation**.
 
 It consolidates the family of cost/usage tools the field has built into one deployable app:
 
@@ -161,7 +161,7 @@ Cost-governance posture as **scored tiles** (Good / Warning / Critical), each wi
 
 ![Governance — scored posture tiles](docs/screenshots/11-governance.png)
 
-Governance also surfaces **Governed Tags + Data Classification**: governed-tag coverage (e.g. `system.certification_status`, domain, team) and auto **Data Classification** results (`class.*` column tags — PII/email/name/IP/age) read live from `system.information_schema.{table_tags,column_tags}`. The budget / budget-policy / cluster-policy / PAT / alert tiles come from admin APIs via the `finops-command-center-admin-sync` daily job into the Delta `<ingest_schema>.finops_admin` table; until it runs, live mode shows a "run finops_admin_sync" prompt for exactly those tiles (never sample), and a **Last refreshed** time once ingested.
+Governance also surfaces **Governed Tags + Data Classification**: governed-tag coverage (e.g. `system.certification_status`, domain, team) and auto **Data Classification** results (`class.*` column tags — PII/email/name/IP/age) read live from `system.information_schema.{table_tags,column_tags}`. The budget / budget-policy / cluster-policy / PAT / alert tiles come from admin APIs via the `estate-command-center-admin-sync` daily job into the Delta `<ingest_schema>.finops_admin` table; until it runs, live mode shows a "run finops_admin_sync" prompt for exactly those tiles (never sample), and a **Last refreshed** time once ingested.
 
 ### AI $
 
@@ -214,7 +214,7 @@ Governance also surfaces **Governed Tags + Data Classification**: governed-tag c
 
 `system.billing.usage` · `system.billing.list_prices` · `system.query.history` · `system.access.table_lineage` · `system.access.workspaces_latest` (so answers use workspace **names**, not ids) · `system.compute.warehouses` · `system.compute.clusters` · `system.compute.node_timeline` · `system.lakeflow.job_run_timeline`
 
-- **Auto-provisioned + auto-discovered:** on deploy the app **creates** a `FinOps Command Center` Genie Space over those tables if one doesn't exist, and **discovers it by title** on startup — so you do **not** need to set `genie_space_id` (set it only to point at your own Space instead). Re-provisioning **reuses and syncs** the existing Space (dedupe by title prefix), so restarts never spawn duplicates. *(Deliberately excluded from the Space: `information_schema.*` — per-catalog + noisy for NL — `access.audit` — huge — and the optional/grant-gated `data_quality_monitoring` / `data_classification` tables, which would error the Space if ungranted.)*
+- **Auto-provisioned + auto-discovered:** on deploy the app **creates** a `Estate Command Center` Genie Space over those tables if one doesn't exist, and **discovers it by title** on startup — so you do **not** need to set `genie_space_id` (set it only to point at your own Space instead). Re-provisioning **reuses and syncs** the existing Space (dedupe by title prefix), so restarts never spawn duplicates. *(Deliberately excluded from the Space: `information_schema.*` — per-catalog + noisy for NL — `access.audit` — huge — and the optional/grant-gated `data_quality_monitoring` / `data_classification` tables, which would error the Space if ungranted.)*
 - **Live mode = real Genie only, never a demo answer.** In live the app calls the real Genie Conversation API. If a Space isn't configured/available it says so honestly ("Ask Genie isn't configured…"); if Genie can't answer it says so — it **never** fabricates a canned answer. The `demo answer` (with its synthetic chart) appears **only in demo mode**.
 - **Demo mode:** returns **canned, streamed** answers grounded in the seeded data, badged `demo answer`.
 - **Inert when off:** with `features.genie=false` the banner is hidden **and** `/api/genie/ask` returns 404 — no Genie or model calls happen server-side.
@@ -501,10 +501,10 @@ Follow these one-action-at-a-time steps inside the Databricks workspace. If you 
 In the top-right of the workspace, click **Create ▾ → Git folder**. In the **Git repository URL** box paste:
 
 ```
-https://github.com/beeyal/finops-command-center
+https://github.com/beeyal/databricks-estate-command-center
 ```
 
-(This is a **private** repo — if you can't see it, request access first.) Click **Create**. The code lands at `/Workspace/Users/<you>/finops-command-center` (where `<you>` is your own email). That's your copy of the app — no download, no build.
+(This is a **private** repo — if you can't see it, request access first.) Click **Create**. The code lands at `/Workspace/Users/<you>/databricks-estate-command-center` (where `<you>` is your own email). That's your copy of the app — no download, no build.
 
 #### Step 2 — Set your configuration
 
@@ -534,9 +534,9 @@ Create a new notebook (or open the workspace **web terminal**) and run a single 
 
 ```
 %sh
-cd /Workspace/Users/<you>/finops-command-center
+cd /Workspace/Users/<you>/databricks-estate-command-center
 databricks bundle deploy -t customer
-databricks bundle run finops -t customer
+databricks bundle run estate -t customer
 ```
 
 In plain words: this creates the app and its daily job in your workspace and prints the app's URL when it's done. You don't have to sign in or paste any token — the notebook already runs **as you**, so the bundle authenticates automatically. Open the printed URL and the app is live (in demo mode unless you did step 2).
@@ -547,25 +547,25 @@ Open a **SQL Editor** tab and run the `GRANT` block from [Reference — grants](
 
 #### Step 5 — Turn on the scheduled jobs (skip if you're staying in demo mode)
 
-Go to **Workflows** and **unpause** the jobs (both ship paused): **`finops_gold_sync`** (nightly, **required for live mode** — precomputes every estate payload + table-size census into `<gold_schema>.finops_gold`; **run it once manually right after unpausing** so live pages have data to serve; its SP needs read on the system tables + `CREATE`/`MODIFY` on `gold_schema`) and **`finops-command-center-admin-sync`** (daily, optional — set it to **run as an admin service principal**, since it needs account + workspace admin to read the admin APIs and `CREATE`/`MODIFY` on `ingest_schema`; see [Reference — the scheduled jobs](#reference--the-two-scheduled-jobs)).
+Go to **Workflows** and **unpause** the jobs (both ship paused): **`finops_gold_sync`** (nightly, **required for live mode** — precomputes every estate payload + table-size census into `<gold_schema>.finops_gold`; **run it once manually right after unpausing** so live pages have data to serve; its SP needs read on the system tables + `CREATE`/`MODIFY` on `gold_schema`) and **`estate-command-center-admin-sync`** (daily, optional — set it to **run as an admin service principal**, since it needs account + workspace admin to read the admin APIs and `CREATE`/`MODIFY` on `ingest_schema`; see [Reference — the scheduled jobs](#reference--the-two-scheduled-jobs)).
 
 That's the whole workspace flow: **Git folder → edit `app.yaml` → `%sh` deploy cell → grants in SQL Editor → unpause the two jobs.** The frontend is pre-built and committed, so nothing compiles and no laptop is involved.
 
-> **Good to know.** The app serves a compiled React bundle (`frontend/dist`) that is **committed to the repo**, so the deploy never runs npm or a build step. The bundle deploy creates the app and **two** scheduled jobs — `finops_gold_sync` (nightly serving-layer precompute) and `finops-command-center-admin-sync` (daily admin-API ingest).
+> **Good to know.** The app serves a compiled React bundle (`frontend/dist`) that is **committed to the repo**, so the deploy never runs npm or a build step. The bundle deploy creates the app and **two** scheduled jobs — `finops_gold_sync` (nightly serving-layer precompute) and `estate-command-center-admin-sync` (daily admin-API ingest).
 
 ### Prefer the CLI on your laptop?
 
 This is the **secondary** path — use it only if you'd rather work from your own terminal. It does the same thing as the workspace flow above, just from your laptop.
 
 1. **Install the Databricks CLI.** On macOS: `brew install databricks`. On Windows: `winget install Databricks.CLI`.
-2. **Get the code:** `git clone https://github.com/beeyal/finops-command-center` (private repo — request access first), then `cd finops-command-center`.
+2. **Get the code:** `git clone https://github.com/beeyal/databricks-estate-command-center` (private repo — request access first), then `cd databricks-estate-command-center`.
 3. **Log in:** `databricks auth login --profile my-workspace` and follow the browser prompt.
 4. **Set your config:** edit `app.yaml` exactly as in [Step 2 — Set your configuration](#step-2--set-your-configuration) above (`USE_LIVE`, `DATABRICKS_WAREHOUSE_ID`, `FINOPS_GOLD_SCHEMA`, and any `FINOPS_FEATURE_*` flags).
 5. **Deploy and run:**
 
 ```bash
 databricks bundle deploy -t customer -p my-workspace
-databricks bundle run   finops -t customer -p my-workspace
+databricks bundle run   estate -t customer -p my-workspace
 ```
 
 The `customer` target is portable — it no longer hardcodes a host, so it deploys to whatever workspace the `-p` profile points at. Then run the grants ([Reference — grants](#reference--grants-live-mode-only)) and unpause the daily job as above.
@@ -581,7 +581,7 @@ The `customer` target is portable — it no longer hardcodes a host, so it deplo
 | **Admin-API panels** (governance budget/policy/PAT/alert tiles, Access groups + PATs, DQM monitor configs) | A UC schema (`ingest_schema`) the `finops_admin_sync` job can write, and the **`finops_admin_sync` job** scheduled — its service principal needs **account admin** + **workspace admin** + `CREATE`/`MODIFY` on `ingest_schema` (see [Reference — the scheduled jobs](#reference--the-two-scheduled-jobs)). |
 | **Live mode** (any estate) | **Required:** set **`gold_schema`** (e.g. `main.finops_gold`) and unpause the nightly **`finops_gold_sync`** job. It precomputes every estate payload + a per-table size census into `<gold_schema>.finops_gold` + `finops_gold_table_sizes`, so the app serves each page in ~1s on a scale-to-zero warehouse — no per-request scan of the account-wide system tables (which is not production-viable). The job's SP needs read on the system tables + `CREATE`/`MODIFY` on `gold_schema`. The app **won't boot in live mode without `gold_schema`** — for a read-only eval only, `FINOPS_ALLOW_LIVE_NO_GOLD=true` runs live off system tables (slow). |
 | **Data Quality tab** | For live data the app SP needs `SELECT` on `system.data_quality_monitoring`; monitor configs come from the `finops_admin_sync` ingest. |
-| **Ask Genie** | Auto-provisioned — the deploy **creates a "FinOps Command Center" Genie Space** over 9 cost/usage/ops system tables if `genie_space_id` is blank (most customers won't have one), and **auto-discovers it by title** on startup, so no manual id is needed. Re-provisioning reuses + syncs the existing Space (no duplicates). Set `genie_space_id` only to point at your own Space instead. |
+| **Ask Genie** | Auto-provisioned — the deploy **creates a "Estate Command Center" Genie Space** over 9 cost/usage/ops system tables if `genie_space_id` is blank (most customers won't have one), and **auto-discovers it by title** on startup, so no manual id is needed. Re-provisioning reuses + syncs the existing Space (no duplicates). Set `genie_space_id` only to point at your own Space instead. |
 | **AI narration** (optional) | A **model-serving / FMAPI endpoint** (e.g. `databricks-claude-sonnet-4-6` — a pay-per-token Foundation Model endpoint). The deploy verifies it exists; only needed when `features.ai_narration: true`. |
 
 ### Reference — the full config surface
@@ -731,7 +731,7 @@ gold/admin tables are absent.
 
 So customers don't have to set anything up by hand:
 
-- **Genie Space** — if `genie_space_id` is blank and `features.genie` is on, the deploy **creates a "FinOps Command Center" Genie Space** grounded on **9 cost/usage/ops system tables** (`billing.usage`, `billing.list_prices`, `query.history`, `access.table_lineage`, `access.workspaces_latest`, `compute.warehouses`, `compute.clusters`, `compute.node_timeline`, `lakeflow.job_run_timeline` — see the [Ask Genie](#ask-genie) section) via the Genie `create_space` API. The app **auto-discovers it by title** ("FinOps Command Center") on startup. Idempotent (dedupes by title prefix + syncs the table set on a reused space — never spawns duplicates). Runs at deploy time and again daily from `finops_admin_sync`. Set `genie_space_id` explicitly to use your own Space instead.
+- **Genie Space** — if `genie_space_id` is blank and `features.genie` is on, the deploy **creates a "Estate Command Center" Genie Space** grounded on **9 cost/usage/ops system tables** (`billing.usage`, `billing.list_prices`, `query.history`, `access.table_lineage`, `access.workspaces_latest`, `compute.warehouses`, `compute.clusters`, `compute.node_timeline`, `lakeflow.job_run_timeline` — see the [Ask Genie](#ask-genie) section) via the Genie `create_space` API. The app **auto-discovers it by title** ("Estate Command Center") on startup. Idempotent (dedupes by title prefix + syncs the table set on a reused space — never spawns duplicates). Runs at deploy time and again daily from `finops_admin_sync`. Set `genie_space_id` explicitly to use your own Space instead.
 - **LLM endpoint** — when `features.ai_narration` is on, the deploy verifies the configured Claude endpoint (`llm_endpoint`) exists and is ready, and reports the exact fix if not.
 
 Both are non-fatal: a provisioning gap degrades the AI feature gracefully, never blocking the deploy.
@@ -767,7 +767,7 @@ There is **no sample data in live mode** — every panel is either a system-tabl
 
 | Object | Type | Cadence | Purpose |
 |---|---|---|---|
-| `finops-command-center` | Databricks App | always-on | The app itself (`USE_LIVE=true`) |
+| `estate-command-center` | Databricks App | always-on | The app itself (`USE_LIVE=true`) |
 | Serverless SQL warehouse | Compute (customer-provided) | on-demand | System-table reads + gold-table lookups |
 | `<gold_schema>` (e.g. `main.finops_gold`) | UC schema — `finops_gold` + `finops_gold_table_sizes` Delta tables | — | Nightly-precomputed estate payloads + table-size census, served in sub-second time |
 | `<ingest_schema>` (e.g. `main.finops_cc`) | UC schema — `finops_admin` Delta table | — | Grant target for the admin-sync SP; holds ingested admin-API data |

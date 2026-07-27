@@ -1,6 +1,6 @@
 # Security
 
-> FinOps Command Center is a field-built, open-source example — **not an official Databricks product**, provided **as-is without warranty**. Review it against your own security requirements before deploying.
+> Estate Command Center is a field-built, open-source example — **not an official Databricks product**, provided **as-is without warranty**. Review it against your own security requirements before deploying.
 
 ## Posture at a glance
 

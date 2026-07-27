@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 FinOps Command Center — Deployment Guide
+# 🚀 Estate Command Center — Deployment Guide
 
 **One screen for cost, usage, access & governance across your Databricks estate.**
 
@@ -10,7 +10,7 @@
 
 ---
 
-The FinOps Command Center reads your own Databricks **system tables** and turns them
+The Estate Command Center reads your own Databricks **system tables** and turns them
 into a single screen — with a priority-ranked recommendation for every finding. It
 only ever runs `SELECT` and read-only APIs, so it can **never change or touch your
 data**.
@@ -23,9 +23,9 @@ tools on your laptop. Everything below happens in the Databricks UI.
 > **The 60-second version** — everything else on this page is just detail:
 > ```sh
 > %sh
-> cd /Workspace/Users/<you>/finops-command-center   # the Git folder from Step ①
+> cd /Workspace/Users/<you>/databricks-estate-command-center   # the Git folder from Step ①
 > databricks bundle deploy -t customer              # creates the app + jobs
-> databricks bundle run   finops -t customer        # starts it, prints the URL
+> databricks bundle run   estate -t customer        # starts it, prints the URL
 > ```
 > Run that in a notebook cell and the app is live **in demo mode** — no config, no
 > grants, nothing to build. Then edit **three values** in `app.yaml` (Step ②) and
@@ -43,10 +43,10 @@ tools on your laptop. Everything below happens in the Databricks UI.
 
 | | Object | What it is |
 |---|---|---|
-| 📊 | **finops-command-center** | The app itself — a small always-on container (~0.5 DBU/hr at `compute_size` MEDIUM, ≈ $270/mo; stop it to pay nothing). A shared multi-region demo workspace can over-report this ~3×. |
+| 📊 | **estate-command-center** | The app itself — a small always-on container (~0.5 DBU/hr at `compute_size` MEDIUM, ≈ $270/mo; stop it to pay nothing). A shared multi-region demo workspace can over-report this ~3×. |
 | ⚡ | **1 SQL warehouse** *(you provide — not created by the deploy)* | A serverless SQL warehouse you already have powers the reads; supply its id as `DATABRICKS_WAREHOUSE_ID`. Scales to zero when idle. |
 | 🗄️ | **Gold Delta tables** under `<gold_schema>` (`finops_gold`, `finops_gold_table_sizes`, `finops_gold_warehouse_daily`, `finops_gold_cluster_daily`) | Nightly-precomputed estate payloads (every tab) + a per-table size census + daily-grain warehouse/cluster history, so estate pages load in ~1s instead of re-scanning account-wide system tables per request. **Required in live mode** — populated by the gold-sync job below. |
-| 🔁 | **Two scheduled jobs** (`finops_gold_sync` nightly + `finops-command-center-admin-sync` daily) | Gold-sync precomputes the estate payloads (**required for live mode**); admin-sync fills the governance & access panels that don't live in system tables (budgets, policies, tokens, groups). **Both ship paused** — unpause gold-sync for live (admin-sync is optional). |
+| 🔁 | **Two scheduled jobs** (`finops_gold_sync` nightly + `estate-command-center-admin-sync` daily) | Gold-sync precomputes the estate payloads (**required for live mode**); admin-sync fills the governance & access panels that don't live in system tables (budgets, policies, tokens, groups). **Both ship paused** — unpause gold-sync for live (admin-sync is optional). |
 
 > [!IMPORTANT]
 > The app runs as its own **service principal** — a machine identity Databricks creates
@@ -61,10 +61,10 @@ Top-right of the workspace, click **Create ▾ → Git folder**. In **Git reposi
 paste:
 
 ```
-https://github.com/beeyal/finops-command-center
+https://github.com/beeyal/databricks-estate-command-center
 ```
 
-Click **Create**. The code lands at `/Workspace/Users/<you>/finops-command-center`
+Click **Create**. The code lands at `/Workspace/Users/<you>/databricks-estate-command-center`
 (where `<you>` is your own email). That's your copy — no download, no build.
 
 > [!NOTE]
@@ -160,9 +160,9 @@ replace `<you>` with your email:
 
 ```sh
 %sh
-cd /Workspace/Users/<you>/finops-command-center
+cd /Workspace/Users/<you>/databricks-estate-command-center
 databricks bundle deploy -t customer
-databricks bundle run   finops -t customer
+databricks bundle run   estate -t customer
 ```
 
 This creates the app and the two scheduled jobs, then prints the app's
@@ -188,14 +188,14 @@ authenticates automatically. Open the printed URL and the app is live.
 > needs none of this — state lives in the bound Postgres.
 >
 > Both are a single `bundle deploy`. Start with `customer`; switch later by re-running
-> with the other target (run `databricks bundle deployment bind finops finops-command-center -t <target>` once first, so the bundle adopts the existing app instead of erroring that it already exists).
+> with the other target (run `databricks bundle deployment bind estate estate-command-center -t <target>` once first, so the bundle adopts the existing app instead of erroring that it already exists).
 
 ---
 
 ## Step ④ — Grant the app read access to your data
 
 **Find the app's service principal first.** Click the **app switcher** (top-left, next
-to the Databricks logo) → **Databricks Apps** → click **finops-command-center** in the
+to the Databricks logo) → **Databricks Apps** → click **estate-command-center** in the
 Name column. On the app's **Overview** / **Authorization** tab you'll see its **service
 principal** — a client ID like `a1b2c3d4-…`. Copy it.
 
@@ -305,7 +305,7 @@ In **Workflows**, unpause the jobs (both ship paused):
   on the catalog** (the job auto-creates the schema — you don't pre-create it) **+ `MODIFY` on
   `gold_schema`**. If your catalog is locked down, pre-create the schema and grant the SP
   `CREATE, MODIFY` on it instead.
-- **finops-command-center-admin-sync** (daily) — fills the governance budget / policy /
+- **estate-command-center-admin-sync** (daily) — fills the governance budget / policy /
   PAT / alert tiles and the Access groups + PAT panels. It reads admin APIs (budgets,
   cluster policies, tokens, SCIM groups, monitor configs), so set it to **run as a service
   principal that is an account admin + workspace admin** — a higher level than the
@@ -327,11 +327,11 @@ In **Workflows**, unpause the jobs (both ship paused):
 
 ```bash
 brew install databricks                                  # macOS (winget install Databricks.CLI on Windows)
-git clone https://github.com/beeyal/finops-command-center && cd finops-command-center
+git clone https://github.com/beeyal/databricks-estate-command-center && cd databricks-estate-command-center
 databricks auth login --profile <name>                   # browser prompt
 # edit app.yaml as in Step ②
 databricks bundle deploy -t customer -p <name>
-databricks bundle run   finops -t customer -p <name>
+databricks bundle run   estate -t customer -p <name>
 ```
 
 Then do steps ④ and ⑤ exactly as above. The `customer` target is portable — it deploys
@@ -423,7 +423,7 @@ deterministic text.
 ## Upgrades
 
 Pull the latest code into the Git folder and re-run the deploy cell
-(`databricks bundle deploy -t customer` then `databricks bundle run finops -t customer`).
+(`databricks bundle deploy -t customer` then `databricks bundle run estate -t customer`).
 Your settings live in `app.yaml`, outside the code, so an upgrade never disturbs them.
 Use the same target you originally deployed (`-t customer` or `-t customer-lakebase`).
 
@@ -447,7 +447,7 @@ Use the same target you originally deployed (`-t customer` or `-t customer-lakeb
 | A tab shows a 503 / "read failed" | The warehouse is stopped, or a grant is missing — the message names the exact object. Re-run the grant from step ④. |
 | App won't start in live mode / logs say "LIVE MODE REQUIRES A GOLD SCHEMA" | Set `FINOPS_GOLD_SCHEMA` in `app.yaml` (step ②) and redeploy — it's required in live mode. For a read-only eval with no writable schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` instead (slow; not for production). |
 | Data still looks empty after `USE_LIVE: "true"` | Confirm `DATABRICKS_WAREHOUSE_ID` **and** `FINOPS_GOLD_SCHEMA` are set in `app.yaml`, that you re-ran the deploy cell, and that you **ran `finops_gold_sync` once** (step ⑤) — live pages serve from gold, which is empty until the first run. |
-| Governance / Access group panels show "run the daily job" | Unpause **finops-command-center-admin-sync** (step ⑤) and let it run once. |
+| Governance / Access group panels show "run the daily job" | Unpause **estate-command-center-admin-sync** (step ⑤) and let it run once. |
 | Pages slow | Confirm the `finops_gold_sync` job actually ran (step ⑤); the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale or you enabled the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch. |
 | No **BU** facet / no **Team** column | Those are optional (step ⑥). Create the mapping tables from [`reference/mapping_tables_setup.sql`](../reference/mapping_tables_setup.sql), set `workspace_bu_table` / `user_team_table`, grant the app SP `SELECT`, and redeploy. |
 | "Workspace has reached the maximum limit of 300 apps" | The target workspace is full — deploy to another workspace. System-table billing is account-wide, so any workspace in the account sees the same usage. |

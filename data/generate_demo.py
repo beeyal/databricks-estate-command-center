@@ -1,4 +1,4 @@
-"""Deterministic demo-data generator for the FinOps Command Center.
+"""Deterministic demo-data generator for the Estate Command Center.
 
 Produces realistic, Acme-shaped data for every page of the app:
 workspaces, queries (with statement metrics), managed/external tables,
@@ -1961,7 +1961,7 @@ def get_cost_drivers(workspace: str | None = None) -> dict[str, Any]:
 if __name__ == "__main__":
     import json
     ov = get_overview()
-    print("=== FinOps Command Center — demo data self-check ===")
+    print("=== Estate Command Center — demo data self-check ===")
     print(f"Workspaces      : {len(get_workspaces())}")
     print(f"Queries         : {len(get_queries())}")
     print(f"Tables          : {len(get_tables())}")

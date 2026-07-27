@@ -1,5 +1,5 @@
 # ===========================================================================
-# FinOps Command Center — Databricks Asset Bundle (SPEC §14)
+# Estate Command Center — Databricks Asset Bundle (SPEC §14)
 # ===========================================================================
 # One-command deploy of the App into ANY workspace:
 #
@@ -14,7 +14,7 @@
 # ---------------------------------------------------------------------------
 
 bundle:
-  name: finops-command-center
+  name: estate-command-center
 
 # ---------------------------------------------------------------------------
 # Variables — overridable per target or with `--var key=value` at deploy time.
@@ -24,7 +24,7 @@ bundle:
 variables:
   app_name:
     description: Databricks App name (must be unique in the target workspace).
-    default: finops-command-center
+    default: estate-command-center
   warehouse_id:
     description: >-
       SQL Warehouse ID for live system-table reads (USE_LIVE=true). Leave 'auto'
@@ -71,10 +71,10 @@ sync:
 # ---------------------------------------------------------------------------
 resources:
   apps:
-    finops:
+    estate:
       name: ${var.app_name}
       description: >-
-        FinOps Command Center — Databricks-native cost-control co-pilot.
+        Estate Command Center — Databricks-native cost, governance & data-quality console.
         Consolidates access, workspace analysis, AI query advisor, storage/table
         optimization, and cost governance into one app.
       source_code_path: ${workspace.root_path}/files
@@ -187,7 +187,7 @@ targets:
     workspace:
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
-      app_name: finops-command-center
+      app_name: estate-command-center
       # For live mode, set your serverless SQL warehouse id (or pass
       # `--var warehouse_id=<id>`). Leave 'auto' for demo mode.
       # warehouse_id: <your-serverless-warehouse-id>
@@ -206,14 +206,14 @@ targets:
     workspace:
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
-      app_name: finops-command-center
+      app_name: estate-command-center
     resources:
       database_instances:
         finops_state:
           name: finops-command-center-state
           capacity: CU_1                 # smallest tier — ample for ack writeback
       apps:
-        finops:
+        estate:
           resources:
             - name: database
               database:

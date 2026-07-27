@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FinOps Command Center — one-command deploy to a Databricks App.
+# Estate Command Center — one-command deploy to a Databricks App.
 # Usage: ./deploy.sh [--profile PROFILE] [--app APP_NAME] [--target TARGET]
 #                    [--customise FILE]
 #                    [--no-genie] [--no-narration] [--no-ai] [--no-dqm]
@@ -140,7 +140,7 @@ if [[ "$OVERRIDE_NO_DQM" == "true" ]]; then
 fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  FinOps Command Center — Deploy"
+echo "  Estate Command Center — Deploy"
 echo "  Profile : $PROFILE"
 echo "  App     : $APP_NAME"
 echo "  Target  : ${TARGET:-dev (default)}"

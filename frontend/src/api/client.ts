@@ -1,5 +1,5 @@
 /**
- * Typed fetch wrappers for the FinOps Command Center backend.
+ * Typed fetch wrappers for the Estate Command Center backend.
  * In dev, requests are proxied to http://localhost:8000 by Vite.
  * In production, the SPA is served by FastAPI on the same origin.
  */

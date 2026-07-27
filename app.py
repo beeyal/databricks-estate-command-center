@@ -1,4 +1,4 @@
-"""FastAPI entry point for the FinOps Command Center.
+"""FastAPI entry point for the Estate Command Center.
 
 Serves the built React SPA from ``frontend/dist`` and exposes the demo /
 system-table API under ``/api/*``. Designed for deployment as a Databricks App
@@ -275,7 +275,7 @@ def _self_provision() -> None:
     threading.Thread(target=_run, daemon=True).start()
     threading.Thread(target=_warm_live_caches, daemon=True).start()
 
-app = FastAPI(title="FinOps Command Center", version="1.0.0")
+app = FastAPI(title="Estate Command Center", version="1.0.0")
 
 
 @app.on_event("startup")
@@ -561,8 +561,8 @@ def get_config() -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         _writeback_ok, _writeback_reason = False, f"writeback unavailable: {e}"
     return {
-        "app_name": "FinOps Command Center",
-        "app_short": "FinOps CC",
+        "app_name": "Estate Command Center",
+        "app_short": "Estate CC",
         "mode": "live" if USE_LIVE else "demo",
         "demo": not USE_LIVE,
         "customer": os.environ.get("FINOPS_CUSTOMER_NAME", "Acme Corp"),

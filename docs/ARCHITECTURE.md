@@ -1,6 +1,6 @@
-# Architecture — FinOps Command Center
+# Architecture — Estate Command Center
 
-> Databricks-native cost-control co-pilot. A React 18 SPA over a FastAPI backend,
+> Databricks-native cost, governance & data-quality console. A React 18 SPA over a FastAPI backend,
 > deployed as a Databricks App via an Asset Bundle. Demo-first (`USE_LIVE=false`)
 > with a live system-table path (`USE_LIVE=true`) documented and parameterised.
 > Live mode serves from nightly precomputed **gold Delta tables** for

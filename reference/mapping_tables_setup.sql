@@ -1,5 +1,5 @@
 -- ===========================================================================
--- FinOps Command Center — optional mapping tables (copy-paste setup)
+-- Estate Command Center — optional mapping tables (copy-paste setup)
 -- ===========================================================================
 -- Databricks system tables don't know your org structure (which workspace is
 -- which business unit, which user is on which team). These two small tables let

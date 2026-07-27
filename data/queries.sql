@@ -1,5 +1,5 @@
 -- ============================================================================
--- FinOps Command Center — REAL system-table SQL (live mode)
+-- Estate Command Center — REAL system-table SQL (live mode)
 -- ============================================================================
 -- These are the production queries the app runs when USE_LIVE=true against a
 -- SQL warehouse via databricks-sql-connector. In demo mode (default,

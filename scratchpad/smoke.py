@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test for a deployed FinOps Command Center app.
+"""End-to-end smoke test for a deployed Estate Command Center app.
 
 Usage:  python3 scratchpad/smoke.py <base_url> <bearer_token>
 

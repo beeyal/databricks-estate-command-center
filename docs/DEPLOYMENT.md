@@ -1,4 +1,4 @@
-# Deploying FinOps Command Center into a customer workspace
+# Deploying Estate Command Center into a customer workspace
 
 This guide covers deploying the app into **any** Databricks workspace — your own
 or a customer's — with a Databricks Asset Bundle. The app is a **small always-on
@@ -76,7 +76,7 @@ the App resource, the two scheduled jobs (`finops_gold_sync` + `finops_admin_syn
   auto-provisions the app service principal's Postgres role and injects the
   connection vars — nothing to set. Opt in only if you want it; the instance is
   always-on (~tens of $/mo). Switching an *existing* app onto this target needs a
-  one-time `databricks bundle deployment bind finops finops-command-center -t customer-lakebase`
+  one-time `databricks bundle deployment bind estate estate-command-center -t customer-lakebase`
   first (so the bundle adopts the running app instead of erroring that it exists).
 
 There is **no npm and no Python build** — the built `frontend/dist` is committed.
@@ -86,7 +86,7 @@ There is **no npm and no Python build** — the built `frontend/dist` is committ
 ```bash
 databricks bundle validate                              # sanity-check the bundle
 databricks bundle deploy -t customer --profile CUSTOMER # sync + create the App
-databricks bundle run finops -t customer --profile CUSTOMER  # start the App
+databricks bundle run estate -t customer --profile CUSTOMER  # start the App
 ```
 
 ### One command (convenience wrapper)
@@ -324,7 +324,7 @@ on the gold schema. No extra Python deps (just `databricks-sdk`).
 ```bash
 # First deploy (demo, no grants) into your own workspace — canonical bundle path
 databricks bundle deploy -t customer
-databricks bundle run finops -t customer
+databricks bundle run estate -t customer
 
 # Or via the convenience wrapper
 ./deploy.sh
@@ -337,5 +337,5 @@ databricks bundle validate
 
 # Flip to live later (edit customise.yaml: use_live/warehouse_id) then redeploy
 databricks bundle deploy -t customer --profile CUSTOMER && \
-  databricks bundle run finops -t customer --profile CUSTOMER
+  databricks bundle run estate -t customer --profile CUSTOMER
 ```

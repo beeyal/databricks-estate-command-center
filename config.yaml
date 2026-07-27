@@ -1,4 +1,4 @@
-# FinOps Command Center — deploy-time configuration (SPEC §10, §14).
+# Estate Command Center — deploy-time configuration (SPEC §10, §14).
 # This file is an OPTIONAL config source. Every value here can also be supplied
 # (and overridden) by the matching environment variable in app.yaml / the App
 # UI → Settings → Environment. Env always wins over this file so a customer can

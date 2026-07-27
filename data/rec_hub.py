@@ -1,4 +1,4 @@
-"""Unified recommendation hub for the FinOps Command Center (SPEC §3.7).
+"""Unified recommendation hub for the Estate Command Center (SPEC §3.7).
 
 This is the aggregation + scoring engine behind ``/api/recommendations/hub`` —
 the single strategic AI-advisor surface. It fuses recommendations from every

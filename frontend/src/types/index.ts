@@ -1,4 +1,4 @@
-// Shared types for the FinOps Command Center frontend.
+// Shared types for the Estate Command Center frontend.
 
 export type PageId =
   | "overview"

@@ -1,4 +1,4 @@
-"""Deterministic, explainable recommendation engine for the FinOps Command Center.
+"""Deterministic, explainable recommendation engine for the Estate Command Center.
 
 Implements SPEC §4: for each query (and, cross-surface, tables) produce a
 structured recommendation:

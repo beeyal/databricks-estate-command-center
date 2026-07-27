@@ -72,7 +72,7 @@ def _provisioned_space_id() -> str:
       1. the id the provision step persisted in <ingest_schema>.finops_admin
          (key 'provision'); and if that isn't found (the Delta round-trip can
          fail silently on some runtimes),
-      2. the newest Space TITLED 'FinOps Command Center' via the list API —
+      2. the newest Space TITLED 'Estate Command Center' via the list API —
          the same title ensure_genie_space creates + dedupes on.
     Only a non-empty result is cached (see _SPACE_ID_CACHE)."""
     global _SPACE_ID_CACHE
@@ -98,9 +98,9 @@ def _provisioned_space_id() -> str:
 
         w = WorkspaceClient()
         # Prefix match: the Genie create API appends a timestamp, so titles look
-        # like "FinOps Command Center 2026-07-21 08:03:40".
+        # like "Estate Command Center 2026-07-21 08:03:40".
         found = [sp for sp in _all_spaces(w)
-                 if (getattr(sp, "title", "") or "").startswith("FinOps Command Center") and getattr(sp, "space_id", None)]
+                 if (getattr(sp, "title", "") or "").startswith("Estate Command Center") and getattr(sp, "space_id", None)]
         if found:
             _SPACE_ID_CACHE = max(found, key=lambda sp: sp.space_id).space_id
             return _SPACE_ID_CACHE
