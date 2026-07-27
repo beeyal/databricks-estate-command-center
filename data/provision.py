@@ -156,7 +156,7 @@ def ensure_llm_endpoint(name: str) -> dict[str, Any]:
 # Default app name (matches databricks.yml's app_name default). Job names are
 # derived from the ACTUAL app name at runtime (see _app_name) so the bundle path
 # and the app-self-provision path never create duplicates — even after a rename.
-_DEFAULT_APP = "finops-command-center"
+_DEFAULT_APP = "estate-command-center"
 
 
 def _app_name() -> str:
