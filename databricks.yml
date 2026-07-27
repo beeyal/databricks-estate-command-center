@@ -1,0 +1,222 @@
+# ===========================================================================
+# FinOps Command Center — Databricks Asset Bundle (SPEC §14)
+# ===========================================================================
+# One-command deploy of the App into ANY workspace:
+#
+#     databricks bundle deploy -t dev          # your own workspace (default)
+#     databricks bundle deploy -t customer     # a customer's workspace
+#
+# Onboarding a customer is CONFIG-ONLY — edit `customise.yaml` (never code) and
+# either run `./deploy.sh` (which reads customise.yaml → app.yaml env) or set the
+# variables below at deploy time. The App is a small always-on container (stop
+# it to pay nothing) and ships in demo mode, so no warehouse or system-table
+# grants are required just to stand it up. See docs/DEPLOYMENT.md.
+# ---------------------------------------------------------------------------
+
+bundle:
+  name: finops-command-center
+
+# ---------------------------------------------------------------------------
+# Variables — overridable per target or with `--var key=value` at deploy time.
+# These map onto the customer-facing fields in customise.yaml. Leaving the
+# defaults ships a fully-working demo (no live grants needed).
+# ---------------------------------------------------------------------------
+variables:
+  app_name:
+    description: Databricks App name (must be unique in the target workspace).
+    default: finops-command-center
+  warehouse_id:
+    description: >-
+      SQL Warehouse ID for live system-table reads (USE_LIVE=true). Leave 'auto'
+      for demo mode — no warehouse or grants required to run.
+    default: auto
+  ingest_schema:
+    description: >-
+      UC schema (catalog.schema) the finops_admin_sync job writes admin-API data
+      into (finops_admin table). Also used as the roll-up cache schema.
+    default: ""
+  llm_model:
+    description: >-
+      Claude model for optional LLM narration (FMAPI serving endpoint).
+    default: databricks-claude-sonnet-4-6
+
+# Deploy under the current user's workspace files by default. `deploy.sh` then
+# points `databricks apps deploy` at this same `/files` path.
+workspace:
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}
+
+# Only sync what the app needs at runtime — the built React bundle + Python. The
+# raw frontend/src is excluded via .databricksignore to keep the footprint tiny.
+sync:
+  include:
+    - frontend/dist/**
+  # Keep the deployed app lean — nothing below is needed at runtime, so it never
+  # lands in the customer's workspace (docs, screenshots, spec, local tooling,
+  # deploy-time-only config). The app runs on app.py + data/ + reference/ +
+  # config.yaml + app.yaml + frontend/dist + requirements.txt.
+  exclude:
+    - .claude
+    - docs
+    - "*.md"
+    - deploy.sh
+    - "customise*.yaml"
+    - .gitignore
+    - .databricksignore
+
+# ---------------------------------------------------------------------------
+# Resources — the App itself. Runtime config (feature flags, USE_LIVE,
+# GENIE_SPACE_ID, FX) lives in app.yaml `env`, written declaratively from
+# customise.yaml by deploy.sh. This keeps the bundle minimal and the same App
+# definition portable across every customer.
+# ---------------------------------------------------------------------------
+resources:
+  apps:
+    finops:
+      name: ${var.app_name}
+      description: >-
+        FinOps Command Center — Databricks-native cost-control co-pilot.
+        Consolidates access, workspace analysis, AI query advisor, storage/table
+        optimization, and cost governance into one app.
+      source_code_path: ${workspace.root_path}/files
+
+      # Live mode (USE_LIVE=true) reads system tables through a SQL warehouse.
+      # Uncomment and set `warehouse_id` (or `--var warehouse_id=<id>`) to bind a
+      # warehouse to the app's service principal. Demo mode needs neither this
+      # resource nor any grant. The read-only grant list is in docs/DEPLOYMENT.md.
+      #
+      # resources:
+      #   - name: sql-warehouse
+      #     sql_warehouse:
+      #       id: ${var.warehouse_id}
+      #       permission: CAN_USE
+
+  # TWO scheduled jobs (both nightly, both PAUSED until configured):
+  #  1. finops_gold_sync — the FAST/CHEAP serving layer, and REQUIRED for live
+  #     mode. Precomputes EVERY estate payload (overview, workspaces, tables,
+  #     queries, adoption, classification, dqm, genie/ai cost, access grants,
+  #     JOBS, RECOMMENDATIONS, GOVERNANCE) + a per-table SIZE census into Delta
+  #     gold tables (<gold_schema>.finops_gold + .finops_gold_table_sizes); the app
+  #     then reads those instantly (sub-second, small serverless warehouse,
+  #     scale-to-zero). The app's system-table reads are ACCOUNT-WIDE (every
+  #     workspace, tens of millions of rows), so running them live per request is
+  #     not production-viable — the app refuses to boot in live mode unless
+  #     `gold_schema` is set. There is NO GA system table for bulk table size (R3
+  #     research), so the size census iterates information_schema.tables →
+  #     DESCRIBE DETAIL. Set `gold_schema` in customise.yaml and UNPAUSE this job.
+  #  2. finops_admin_sync — budgets/tokens/SCIM aren't in system tables and need
+  #     a periodic pull with account-admin creds. Writes a Delta admin store.
+  jobs:
+    finops_gold_sync:
+      name: ${var.app_name}-gold-sync
+      schedule:
+        quartz_cron_expression: "0 30 1 * * ?"   # 01:30 daily (before admin-sync)
+        timezone_id: "UTC"
+        pause_status: PAUSED                     # REQUIRED for live: set gold_schema + UNPAUSE (app won't boot live without it)
+      tasks:
+        - task_key: gold_sync
+          spark_python_task:
+            # Reads the same app.yaml the app uses (synced alongside), so
+            # warehouse + gold_schema config is shared — nothing to keep in sync.
+            python_file: ${workspace.root_path}/files/data/gold.py
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+            dependencies:
+              - databricks-sdk>=0.65.0
+      # Writes <gold_schema>.finops_gold (estate payloads) + .finops_gold_table_
+      # sizes (per-table size census). The job SP needs read on the system tables
+      # the app reads + CREATE/MODIFY on the gold schema. Read-only otherwise.
+
+    finops_admin_sync:
+      name: ${var.app_name}-admin-sync
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"   # 02:00 daily
+        timezone_id: "UTC"
+        pause_status: PAUSED                     # unpause once schema + admin grants are set
+      tasks:
+        - task_key: admin_sync
+          spark_python_task:
+            # No positional args — the script reads the SAME app.yaml the app
+            # uses (synced alongside it), so warehouse / schema config is shared
+            # automatically and there's nothing to keep in sync here.
+            python_file: ${workspace.root_path}/files/data/admin_sync.py
+          environment_key: default
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+            dependencies:
+              - databricks-sdk>=0.65.0
+      # Pulls admin-API data (budgets, policies, tokens, SCIM groups, workspace
+      # assignments, DQM monitors) into a Delta <ingest_schema>.finops_admin table.
+      # The job's service principal needs ACCOUNT admin (budgets, budget policies,
+      # SCIM groups, workspace assignments) + WORKSPACE admin (token management,
+      # alerts, quality monitors) — heavier than the app's read-only access.
+
+# ---------------------------------------------------------------------------
+# Targets — pick with `-t <target>`.
+#   dev             : your own workspace, development mode (default).
+#   customer        : the customer's workspace. Writeback is ON and backed by a
+#                     small Delta table via the read warehouse — ZERO extra infra,
+#                     zero extra cost, works everywhere. This is the recommended
+#                     default deploy.
+#   customer-lakebase: same as `customer`, PLUS a bundle-created Lakebase
+#                     (managed Postgres) instance bound to the app for
+#                     lower-latency writeback at scale. The opt-in premium path.
+#
+# WHY A SEPARATE TARGET for Lakebase (not a boolean flag): a Databricks Asset
+# Bundle cannot conditionally include/omit a *resource* from a variable — it has
+# no ternary, and you can't interpolate a whole resource map. Creating vs not
+# creating the Lakebase instance is therefore expressed as two targets. Writeback
+# itself is always on (it's cheap, valuable, and independent of AI/Genie); the
+# only choice here is the STORAGE BACKEND: Delta (default) vs Lakebase (opt-in).
+# ---------------------------------------------------------------------------
+targets:
+  dev:
+    default: true
+    mode: development
+
+  customer:
+    mode: production
+    # PORTABLE: no host is hardcoded, so this deploys into WHATEVER workspace your
+    # CLI profile points at — `databricks auth login --profile <name>` then
+    # `databricks bundle deploy -t customer -p <name>`. Source syncs under your
+    # own user path, so nothing here is specific to one workspace.
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      app_name: finops-command-center
+      # For live mode, set your serverless SQL warehouse id (or pass
+      # `--var warehouse_id=<id>`). Leave 'auto' for demo mode.
+      # warehouse_id: <your-serverless-warehouse-id>
+    # No Lakebase here: writeback (on by default) uses the Delta backend — a tiny
+    # managed Delta table written through the same read warehouse. Nothing extra
+    # to provision, no Postgres cost.
+
+  # Opt-in premium backend: identical to `customer` but ALSO creates a Lakebase
+  # instance and binds it to the app. The customer runs only
+  # `databricks bundle deploy -t customer-lakebase` — no CLI, no env var, no
+  # manual Postgres role: binding the instance to the app auto-provisions the
+  # app's service-principal role and injects PGHOST/PGUSER/PGINSTANCE/… at
+  # runtime, so store.py auto-selects the Lakebase backend over Delta.
+  customer-lakebase:
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      app_name: finops-command-center
+    resources:
+      database_instances:
+        finops_state:
+          name: finops-command-center-state
+          capacity: CU_1                 # smallest tier — ample for ack writeback
+      apps:
+        finops:
+          resources:
+            - name: database
+              database:
+                instance_name: ${resources.database_instances.finops_state.name}
+                database_name: databricks_postgres
+                permission: CAN_CONNECT_AND_CREATE

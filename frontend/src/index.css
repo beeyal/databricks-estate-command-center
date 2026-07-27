@@ -1,0 +1,82 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --color-surface: 245 246 250;
+    --color-card: 255 255 255;
+    --color-border: 226 229 236;
+    --color-brand-dark: 26 26 46;
+    --color-neutral: 110 118 129;
+    --color-accent: 255 54 33; /* Databricks red #FF3621 */
+  }
+  .dark {
+    color-scheme: dark;
+    --color-surface: 13 17 23; /* GitHub-dark base */
+    --color-card: 22 27 34;
+    --color-border: 48 54 61;
+    --color-brand-dark: 230 237 243;
+    --color-neutral: 139 148 158;
+    --color-accent: 255 54 33; /* Databricks red #FF3621 */
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-surface text-brand-dark font-sans antialiased;
+    margin: 0;
+  }
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  button {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-card rounded-xl border border-border shadow-card p-5;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .live-dot {
+    @apply inline-block h-2 w-2 rounded-full bg-success;
+    animation: pulse 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+}
+
+/* Amber flash when a table row is selected/expanded */
+@keyframes row-flash {
+  0% {
+    background-color: rgb(245 158 11 / 0.25);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.row-flash {
+  animation: row-flash 700ms ease-out forwards;
+}

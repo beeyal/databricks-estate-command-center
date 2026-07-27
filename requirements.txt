@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pyyaml>=6.0
+# Live mode (USE_LIVE=true) — reads system tables via a SQL warehouse:
+databricks-sql-connector>=3.4.0
+databricks-sdk>=0.65.0
+# Optional writeback (features.writeback) on the Lakebase backend — a managed
+# Postgres store for acknowledge/ignore state. Only imported when that backend is
+# selected (FINOPS_LAKEBASE_INSTANCE/_DSN set); the Delta backend needs nothing extra.
+psycopg[binary]>=3.1

@@ -1,0 +1,20 @@
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.DS_Store
+frontend/src/
+frontend/node_modules/
+
+# Keep the deployed app lean — none of these are needed at runtime, so they
+# never land in the customer's workspace:
+.claude/
+docs/
+*.md
+deploy.sh
+customise*.yaml
+.gitignore
+SPEC.md
+SUBMISSION_TODO.md

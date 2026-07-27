@@ -1,0 +1,592 @@
+# =============================================================================
+# FinOps Command Center — Cost-Optimization Recommendation Catalog
+# =============================================================================
+# Grounded, platform-operator recommendation catalog powering the §3.7
+# Recommendations hub. Each recommendation matches a concrete DATA TRIGGER
+# (per-workspace / per-BU / per-team / per-user metric conditions) against a
+# real Databricks cost-control play. The catalog-driven strategic-play
+# generator evaluates `trigger` against the estate metrics and emits the
+# scored, filterable rec list on /api/recommendations/hub.
+#
+# NOTE: region/in-geo gating was REMOVED from the app. Any `in_geo_status`
+# fields remaining below are vestigial metadata — the recommender (data/
+# rec_hub.py) reads only `name` from each feature and does not gate on region.
+#
+# GROUNDING PROVENANCE:
+#   - Public Databricks docs + blogs (docs.databricks.com /
+#     learn.microsoft.com/azure/databricks / databricks.com/blog) — cited per rec.
+#   - Internal FinOps playbook: Glean (go/finops) auth FAILED this session
+#     (403 Invalid Token) so it could NOT be used. DBRA (Databricks Research
+#     Agent) WAS reachable and corroborated the internal FinOps notebook
+#     patterns used here (idle-workload waste detection, workspace sprawl
+#     consolidation, per-SKU spending-efficiency classification, node-type
+#     right-sizing, billing-anomaly detection) via the PepsiCo cost-optimization
+#     playbook + inspire_gen N01-billing / N04-optimization notebooks. DBRA
+#     surfaced no shareable dollar figures, so all quantitative impacts below
+#     are cited to PUBLIC docs/blogs or explicitly marked `heuristic`.
+#
+# All dollar savings are ESTIMATES. Ratios/percentages that come from a
+# Databricks source carry a cite; formula-derived ones are marked heuristic.
+# =============================================================================
+
+catalog_version: 1
+generated: 2026-07-07
+grounding:
+  public_docs: true
+  glean_go_finops: false   # auth failed (403 Invalid Token) this session
+  dbra: true               # reachable; corroborated internal notebook patterns, no shareable $ figures
+
+# -----------------------------------------------------------------------------
+# Priority model — how P1/P2/P3 are assigned
+# -----------------------------------------------------------------------------
+priority_model:
+  summary: >-
+    Priority ranks a recommendation by expected value net of cost-to-adopt and
+    risk. score = normalise( est_savings_usd_month × frequency_or_severity )
+    ÷ effort_weight × risk_multiplier. Recs are sorted by priority tier first,
+    then by est_savings_usd_month descending. This mirrors SPEC §3.7:
+    "P1 = high $ impact × low effort × (or high risk)".
+  formula: "priority_score = (norm_savings * severity) / effort_weight * risk_multiplier"
+  inputs:
+    savings: "est $/mo the rec unlocks (or avoids), normalised 0..1 across the estate"
+    severity: "how acute the trigger is — e.g. queued-query pileup, budget breach, prod over-privilege (1.0..2.0)"
+    frequency: "how often the wasteful pattern recurs (run count, daily idle hours)"
+    effort_weight: "Low=1, Med=2, High=3 (implementation + change-management cost)"
+    risk_multiplier: "1.0 default; >1 when NOT acting carries compliance/security/overrun risk (e.g. region non-compliance, no budget alerts, over-privileged prod, runaway GenAI spend)"
+  tiers:
+    P1: "High savings AND (Low/Med effort) — OR any unmitigated compliance/security/overrun risk regardless of savings. Do first."
+    P2: "Material savings at Med effort, or high savings at High effort. Schedule this quarter."
+    P3: "Lower absolute savings, hygiene/enablement, or High effort with modest payback. Backlog / opportunistic."
+  gating_note: >-
+    A rec whose primary feature is `gated: true` (PrPr/NOT_IN_REGION in AU) is
+    never auto-promoted to an actionable P1/P2 apply-CTA; it is shown as
+    informational with a "not yet in AU region" flag. Its priority_default is
+    retained for when the feature reaches GA/PuPr in australiaeast.
+
+# -----------------------------------------------------------------------------
+# Recommendations
+# -----------------------------------------------------------------------------
+recommendations:
+
+  # ===========================================================================
+  # CATEGORY: behavioural / enablement
+  # ===========================================================================
+  - id: BEH-001
+    category: behavioural
+    title: "Stand up a governed Genie Space for a team drowning in ad-hoc inefficient queries"
+    trigger: "team_inefficient_query_count > 100 AND team_query_cost_usd_month > 1000 AND distinct_query_authors_in_team <= 10"
+    what_to_do:
+      - "Identify the top 3-5 users generating the inefficient-query volume and the tables/questions they keep re-asking."
+      - "Create a governed AI/BI Genie Space over the curated Gold tables those questions hit, with certified metrics and example queries so business users self-serve in natural language against UC-governed data (read-only, access-scoped, audited)."
+      - "Point the team at the Genie Space instead of hand-writing SQL on all-purpose compute; retire the ad-hoc notebooks."
+      - "Set a Genie query-execution timeout (Genie auto-cancels executions >15 min) and back it with a serverless SQL warehouse with aggressive auto-stop."
+    features:
+      - name: "AI/BI Genie (natural language querying)"
+        in_geo_status: GA
+      - name: "AI/BI Dashboards (formerly Lakeview)"
+        in_geo_status: GA
+      - name: "Serverless SQL Compute (serverless SQL warehouses)"
+        in_geo_status: GA
+    expected_impact: "Qualitative + heuristic. Deflects repeated analyst-authored inefficient queries to a governed, cached, right-sized path; savings ≈ team_inefficient_query_count × avg_query_cost × deflection_rate (assume 40-60% deflection, heuristic). Genie enforces UC access policies, is read-only, and logs every interaction for audit."
+    effort: Med
+    priority_default: P2
+    scope: team
+    suggested_owner: "Data platform lead + BU analytics lead"
+    source: "https://www.databricks.com/blog/how-databricks-genie-democratizes-data-access-financial-services ; https://docs.databricks.com/aws/en/genie/set-up"
+    notes: "This is the flagship behavioural play from SPEC §3.7.1. Genie LLM spend is separately governable via BEH-004 / AI-001. Genie budgets (LLM) are separate from the SQL-warehouse compute that runs the query."
+
+  - id: BEH-002
+    category: behavioural
+    title: "Attach a cluster policy + statement timeout to a team running away on interactive compute"
+    trigger: "team_interactive_share > 0.6 AND team_all_purpose_cost_usd_month > 2000 AND team_has_no_cluster_policy = true"
+    what_to_do:
+      - "Create a compute policy for the team enforcing autoscaling bounds, auto-termination, max DBU/hour, allowed instance families, and Photon-on."
+      - "Set a workspace/warehouse STATEMENT_TIMEOUT so runaway queries are auto-cancelled instead of burning compute."
+      - "Restrict cluster-create entitlement so users must launch through the policy (no unbounded custom clusters)."
+      - "Move scheduled/repeatable work off all-purpose compute onto jobs compute (see CMP-001)."
+    features:
+      - name: "Compute policies (cluster policies)"
+        in_geo_status: GA
+      - name: "Photon (vectorized query engine)"
+        in_geo_status: GA
+    expected_impact: "Cluster policies enforce autoscaling, auto-termination and instance restrictions — the doc-recommended controls to cap runaway interactive spend. Savings = idle_hours_avoided × node_cost + capped_oversize_delta (heuristic)."
+    effort: Low
+    priority_default: P1
+    scope: team
+    suggested_owner: "Workspace admin"
+    source: "https://docs.databricks.com/aws/en/lakehouse-architecture/cost-optimization/best-practices ; https://learn.microsoft.com/en-us/azure/databricks/admin/clusters/policies"
+    notes: "Low effort, high control leverage — classic P1. Cluster policies are a core, non-region-gated admin capability."
+
+  - id: BEH-003
+    category: behavioural
+    title: "Coach power users off SELECT * and full-scan habits"
+    trigger: "user_full_scan_query_share > 0.3 AND user_query_cost_usd_month > 500 AND user_runs > 50"
+    what_to_do:
+      - "Surface each power user's worst repeat queries (full-scan / SELECT * / low projection) from Query Advisor."
+      - "Run targeted enablement: column projection, predicate pushdown, avoiding NOW()/non-deterministic tiles so result cache hits, using clustered/partitioned filter columns."
+      - "Favor deterministic queries so the serverless remote result cache and disk cache are hit on repeats (dashboards reuse cached results if underlying data unchanged / retrieved <24h)."
+    features:
+      - name: "system.query.history (query history)"
+        in_geo_status: PuPr
+      - name: "Result cache / Disk cache (SQL warehouse caching)"
+        in_geo_status: GA
+    expected_impact: "Qualitative. Rewrites that add predicates + project columns cut bytes scanned; deterministic queries raise cache-hit rate. Savings = bytes_scanned_reduction × scan_$ per user (heuristic)."
+    effort: Low
+    priority_default: P3
+    scope: user
+    suggested_owner: "SA / analytics enablement"
+    source: "https://docs.databricks.com/aws/en/sql/user/queries/query-caching ; https://community.databricks.com/t5/technical-blog/the-top-10-best-practices-for-ai-bi-dashboards-performance/ba-p/156231"
+    notes: "system.query.history is PuPr in AU — usable for analysis but badge as Public Preview."
+
+  - id: BEH-004
+    category: behavioural
+    title: "Right tool for the pattern — move BI reporting off all-purpose clusters onto a SQL warehouse"
+    trigger: "workspace_bi_query_share_on_all_purpose > 0.25 AND workspace_all_purpose_cost_usd_month > 3000"
+    what_to_do:
+      - "Identify BI/reporting queries running on all-purpose or jobs clusters (dashboard/ODBC/JDBC sources)."
+      - "Redirect them to a serverless SQL warehouse (Photon by default, Intelligent Workload Management, sub-second start, scales down earlier than classic)."
+      - "Set warehouse auto-stop aggressively (default 10 min) and let serverless manage concurrency."
+    features:
+      - name: "Serverless SQL Compute (serverless SQL warehouses)"
+        in_geo_status: GA
+      - name: "Photon (vectorized query engine)"
+        in_geo_status: GA
+    expected_impact: "Serverless SQL warehouses start/scale in seconds and scale down earlier than non-serverless, lowering cost for bursty BI; Photon is included by default. Doc-recommended pattern for interactive SQL."
+    effort: Med
+    priority_default: P2
+    scope: workspace
+    suggested_owner: "Data platform lead"
+    source: "https://docs.databricks.com/aws/en/compute/sql-warehouse/warehouse-behavior ; https://docs.databricks.com/aws/en/lakehouse-architecture/cost-optimization/best-practices"
+    notes: "Pairs with CMP-002 (auto-stop/right-size) and CMP-006 (materialized views) for repeated BI."
+
+  # ===========================================================================
+  # CATEGORY: compute
+  # ===========================================================================
+  - id: CMP-001
+    category: compute
+    title: "Evaluate classic/all-purpose Jobs for serverless (A/B, no savings claim)"
+    trigger: "workspace_jobs_on_classic_cost_usd_month > 2000 AND workspace_short_duration_job_share > 0.3"
+    savings_estimatable: false
+    what_to_do:
+      - "List jobs on classic job clusters or (worse) all-purpose compute with short/bursty durations — the profile most likely to benefit from serverless removing spin-up + idle-cluster billing."
+      - "A/B test before deciding: run representative jobs on both classic and serverless and compare BILLED cost. Do not assume a saving — serverless jobs DBUs list ~2x classic, and net spend rises for many workloads."
+      - "For batch, use Standard (cost-optimized) performance mode (accepts a 4-6 min startup) rather than Performance-optimized; keep Performance-optimized only for latency-critical jobs."
+      - "Serverless bills on DBU consumption, not cluster uptime — the win, where it exists, comes from eliminating idle/spin-up time, not a lower unit rate."
+      - "Check blockers first: RDD/SparkContext, Scala/JAR, R, init scripts, custom data sources, time-based streaming triggers, and >7-day runs keep a job on classic."
+    features:
+      - name: "Serverless Jobs & Notebooks (serverless compute for workflows/notebooks)"
+        in_geo_status: GA
+      - name: 'Serverless pipelines "Standard" cost-optimized mode'
+        in_geo_status: GA
+    expected_impact: "Serverless can cut cost for short/spiky/idle-heavy classic jobs by removing spin-up and idle-cluster billing, and reduces operational overhead (no cluster config, versionless, fewer failed runs). But serverless jobs DBUs list ~2x classic, so net savings are NOT guaranteed and cannot be estimated without an A/B run of the specific workload. The published '~70%' figure is Standard vs Performance-optimized mode, NOT vs classic. No dollar figure is shown for this play."
+    effort: Med
+    priority_default: P1
+    scope: workspace
+    suggested_owner: "Data engineering lead"
+    source: "https://docs.databricks.com/aws/en/compute/serverless/migration ; https://learn.microsoft.com/en-us/azure/databricks/compute/serverless/best-practices ; internal: go/serverless-migration-planner (not for customer-facing use)"
+    notes: "Serverless Jobs GA in australiaeast. Standard-mode caveats: 4-6 min startup, unsupported for continuous pipelines, runs/submit one-time runs, and SQL-warehouse job tasks. Savings deliberately not estimated (field + docs research 2026-07-20): majority of classic->serverless migrations increase net spend."
+
+  - id: CMP-002
+    category: compute
+    title: "Set aggressive auto-stop and right-size an idle / oversized SQL warehouse"
+    trigger: "warehouse_idle_hours_per_day > 4 OR warehouse_auto_stop_minutes > 30 OR (warehouse_p95_queue_depth = 0 AND warehouse_utilisation < 0.3)"
+    what_to_do:
+      - "Set auto-stop to the recommended 10 min (min 5 via UI, 1 via API) so the warehouse stops when idle."
+      - "Right-size: prefer one larger warehouse and let serverless manage concurrency; size DOWN an over-provisioned warehouse showing zero peak-queued-queries and low utilisation."
+      - "Cap max clusters; monitor Peak Queued Queries — consistently >0 means scale up, sustained 0 means scale down."
+    features:
+      - name: "Serverless SQL Compute (serverless SQL warehouses)"
+        in_geo_status: GA
+    expected_impact: "Aggressive auto-stop + right-size are the doc-recommended levers to cut idle SQL spend. Savings = idle_hours/day × 30 × warehouse_$_per_hour + oversize_delta (heuristic; formula uses observed idle + list price)."
+    effort: Low
+    priority_default: P1
+    scope: workspace
+    suggested_owner: "Workspace admin"
+    source: "https://docs.databricks.com/aws/en/compute/sql-warehouse/warehouse-behavior ; https://learn.microsoft.com/en-us/azure/databricks/lakehouse-architecture/cost-optimization/best-practices"
+    notes: "Highest-frequency, lowest-effort win. Fires per-warehouse."
+
+  - id: CMP-003
+    category: compute
+    title: "Enable Photon on SQL/DataFrame workloads still on the non-vectorized engine"
+    trigger: "workload_photon_enabled = false AND workload_type IN ('sql','dataframe') AND workload_cost_usd_month > 1000"
+    what_to_do:
+      - "Enable Photon on clusters/warehouses running heavy SQL or DataFrame work (SQL warehouses include Photon by default)."
+      - "Validate throughput gain vs the per-DBU Photon premium on a representative workload."
+    features:
+      - name: "Photon (vectorized query engine)"
+        in_geo_status: GA
+    expected_impact: "Photon is the doc-recommended engine for SQL/DataFrame workloads; faster completion lowers total DBU-hours despite the per-DBU premium. Net savings depend on workload (heuristic)."
+    effort: Low
+    priority_default: P2
+    scope: workspace
+    suggested_owner: "Data engineering lead"
+    source: "https://docs.databricks.com/aws/en/compute/photon ; https://docs.databricks.com/aws/en/lakehouse-architecture/cost-optimization/best-practices"
+    notes: "Caveat (from in_geo_matrix): Graviton+Photon doesn't support Container Services / DBSQL warehouses."
+
+  - id: CMP-004
+    category: compute
+    title: "Use instance pools + spot workers for classic clusters with slow starts / on-demand-only nodes"
+    trigger: "workspace_classic_cluster_cost_usd_month > 3000 AND (workspace_avg_cluster_start_seconds > 120 OR workspace_spot_worker_share < 0.2)"
+    savings_estimatable: false
+    what_to_do:
+      - "Create instance pools to cut cluster start/scale times (warm nodes) for frequently-launched classic clusters."
+      - "Use spot instances for workers (keep on-demand for the driver) on fault-tolerant batch workloads."
+      - "Select latest-generation instance types matched to workload family (memory/compute/storage/GPU-optimized)."
+    features:
+      - name: "Instance pools (classic compute)"
+        in_geo_status: GA
+      - name: "Spot instances (classic worker nodes)"
+        in_geo_status: GA
+    expected_impact: "Pools reduce startup-time waste; spot workers cut node cost (excess-capacity pricing) on fault-tolerant work. Doc-recommended for classic compute. Savings NOT estimated here — the benefit is on the Azure VM bill (spot discount + reservation coverage), which lives in Azure Billing, not system.billing.usage (DBU list cost only). Wire in Azure cost to quantify."
+    effort: Med
+    priority_default: P2
+    scope: workspace
+    suggested_owner: "Data engineering lead"
+    source: "https://docs.databricks.com/aws/en/compute/cluster-config-best-practices ; https://docs.databricks.com/aws/en/lakehouse-architecture/cost-optimization/best-practices"
+    notes: "Only relevant while workloads remain on classic compute; serverless (CMP-001/002) supersedes this where migration is viable."
+
+  - id: CMP-005
+    category: compute
+    title: "Upgrade stale DBR / move to versionless serverless"
+    trigger: "workload_dbr_version < '14.3' OR (workload_on_classic = true AND workload_serverless_eligible = true)"
+    what_to_do:
+      - "Upgrade clusters on old DBR to the latest LTS for performance/cost improvements (docs: keep runtimes current)."
+      - "Where eligible, move to versionless serverless so runtime upgrades are automatic and you stop paying for idle cluster uptime."
+    features:
+      - name: "Serverless Jobs & Notebooks (serverless compute for workflows/notebooks)"
+        in_geo_status: GA
+    expected_impact: "Qualitative. Current runtimes run faster (lower DBU-hours); versionless serverless removes idle-uptime cost and maintenance toil. Savings heuristic."
+    effort: Med
+    priority_default: P3
+    scope: workspace
+    suggested_owner: "Data engineering lead"
+    source: "https://docs.databricks.com/aws/en/lakehouse-architecture/cost-optimization/best-practices ; https://www.databricks.com/blog/evolution-data-engineering-how-serverless-compute-transforming-notebooks-lakeflow-jobs"
+    notes: "Also unlocks Liquid Clustering (needs DBR 15.4 LTS+) and CLUSTER BY AUTO."
+
+  - id: CMP-006
+    category: compute
+    title: "Materialize repeated BI aggregations with materialized views + rely on result/disk cache"
+    trigger: "dashboard_or_query_repeat_count_month > 200 AND query_recomputes_same_aggregation = true AND query_cost_usd_month > 800"
+    what_to_do:
+      - "Identify dashboard tiles / queries that re-run the same expensive aggregation against base tables."
+      - "Create a materialized view (or standalone MV) for the aggregation; it precomputes + incrementally refreshes so end-user queries hit precomputed results, not base tables."
+      - "Keep tiles deterministic (avoid NOW()) so the serverless remote result cache + disk cache absorb repeats (dashboards reuse cached results if data unchanged / <24h)."
+    features:
+      - name: "Materialized Views (Databricks SQL)"
+        in_geo_status: GA
+      - name: "Result cache / Disk cache (SQL warehouse caching)"
+        in_geo_status: GA
+    expected_impact: "MVs precompute slow/frequent computations and refresh incrementally, cutting query latency and reprocessing cost; caching + deterministic tiles raise cache-hit rate (Databricks blog + AI/BI perf best practices). Savings = repeat_count × (full_scan_cost − cache_or_mv_read_cost) (heuristic)."
+    effort: Med
+    priority_default: P2
+    scope: workspace
+    suggested_owner: "Analytics lead"
+    source: "https://www.databricks.com/blog/faster-lakeview-dashboards-materialized-views ; https://docs.databricks.com/aws/en/sql/user/queries/query-caching"
+    notes: "Uses GA standalone MVs (/ldp/dbsql/materialized) — distinct from the NOT_IN_REGION 'serverless standalone pipelines (Beta)' compute. MV as a table/query object is GA in AU."
+
+  # ===========================================================================
+  # CATEGORY: storage
+  # ===========================================================================
+  - id: STO-001
+    category: storage
+    title: "Enable Predictive Optimization on UC managed tables that lack it"
+    trigger: "table_type = 'MANAGED' AND table_predictive_optimization_enabled = false AND table_scan_cost_usd_month > 200"
+    what_to_do:
+      - "Enable Predictive Optimization at the catalog/schema level (Premium plan + UC managed tables) so OPTIMIZE/VACUUM/ANALYZE run automatically on purpose-built serverless."
+      - "Confirm the account rollout has reached these tables (existing-account rollout completes ~Aug 2026; on by default for accounts created on/after 2024-11-11)."
+    features:
+      - name: "Predictive Optimization (auto OPTIMIZE/VACUUM/ANALYZE for UC managed tables)"
+        in_geo_status: GA
+    expected_impact: "Preview customers reported ~2x query-performance improvement and ~50% storage savings; PO delivered ~2x storage reduction and 20x faster selective queries / 68% faster large scans in Databricks' own data, at <5% of ingestion cost (Databricks blogs). Savings = current OPTIMIZE/VACUUM manual-maintenance compute avoided + storage reduction."
+    effort: Low
+    priority_default: P1
+    scope: workspace
+    suggested_owner: "Data platform lead"
+    source: "https://www.databricks.com/blog/introducing-predictive-optimization-faster-queries-cheaper-storage ; https://docs.databricks.com/aws/en/optimizations/predictive-optimization"
+    notes: "PO is region-gated (runs on serverless jobs) but australiaeast is explicitly supported. Enabling PO is the prerequisite for CLUSTER BY AUTO (STO-002)."
+
+  - id: STO-002
+    category: storage
+    title: "Apply Liquid Clustering / CLUSTER BY AUTO to over-partitioned or poorly-pruned tables"
+    trigger: "table_pruning_efficiency < 0.3 AND table_bytes_read_month_gb > 500 AND (table_is_over_partitioned = true OR table_clustered = false)"
+    what_to_do:
+      - "Enable CLUSTER BY AUTO on UC managed Delta tables (needs DBR 15.4 LTS+ and PO enabled — PO does the async key selection)."
+      - "For existing partitioned tables on DBR 18.1+, use ALTER TABLE ... REPLACE PARTITIONED BY WITH CLUSTER BY to migrate off partitioning."
+      - "For a declarative-pipeline table, enable PO at the target CATALOG/SCHEMA BEFORE pipeline validation (known validation bug: pipeline-created tables don't reliably inherit PO)."
+    features:
+      - name: "CLUSTER BY AUTO (automatic liquid clustering column selection)"
+        in_geo_status: GA
+      - name: "Liquid Clustering (CLUSTER BY on Delta tables)"
+        in_geo_status: GA
+      - name: "Predictive Optimization (auto OPTIMIZE/VACUUM/ANALYZE for UC managed tables)"
+        in_geo_status: GA
+    expected_impact: "Liquid clustering improved read performance 2-12x vs traditional layouts; example CLUSTER BY AUTO on date+customer_id gave ~90% data-pruning rate (Databricks blog/docs). Savings = bytes_scanned_reduction × scan_$."
+    effort: Med
+    priority_default: P1
+    scope: workspace
+    suggested_owner: "Data engineering lead"
+    source: "https://docs.databricks.com/aws/en/tables/clustering ; https://www.databricks.com/blog/announcing-automatic-liquid-clustering"
+    notes: "MUST surface the DLT prerequisite warning (cluster_by_auto_dlt known validation issue) from in_geo_matrix. All three features GA in australiaeast."
+
+  - id: STO-003
+    category: storage
+    title: "Run OPTIMIZE + VACUUM on tables with small-file bloat / stale versions (interim before PO)"
+    trigger: "table_small_file_ratio > 0.5 AND table_num_files > 10000 OR (table_last_vacuum_days_ago > 30 AND table_stale_bytes_gb > 100)"
+    what_to_do:
+      - "Run OPTIMIZE to compact small files and VACUUM to reclaim stale versioned bytes."
+      - "Then enable Predictive Optimization (STO-001) so this becomes automatic and you stop hand-scheduling maintenance jobs."
+    features:
+      - name: "OPTIMIZE / VACUUM (Delta table maintenance)"
+        in_geo_status: GA
+      - name: "Predictive Optimization (auto OPTIMIZE/VACUUM/ANALYZE for UC managed tables)"
+        in_geo_status: GA
+    expected_impact: "OPTIMIZE saving ~= scan_reduction_from_compaction × query_cost_on_table; VACUUM saving ~= stale_bytes × storage_$/GB/mo (SPEC §3.4 formula, heuristic). Databricks measured up to 2.2x query improvement from automatic file-size optimization."
+    effort: Low
+    priority_default: P2
+    scope: workspace
+    suggested_owner: "Data engineering lead"
+    source: "https://www.databricks.com/blog/how-databricks-improved-query-performance ; https://docs.databricks.com/aws/en/optimizations/"
+    notes: "Treat as the manual interim; STO-001 (PO) is the durable fix."
+
+  - id: STO-004
+    category: storage
+    title: "Convert external tables to UC managed to unlock automatic maintenance"
+    trigger: "table_type = 'EXTERNAL' AND table_scan_cost_usd_month > 200 AND (table_needs_optimize = true OR table_predictive_optimization_enabled = false)"
+    what_to_do:
+      - "Convert external tables to UC managed via CTAS or DEEP CLONE (per SPEC §3.4 path)."
+      - "Managed tables get PO auto-enabled + Liquid Clustering + catalog-managed commits — ongoing OPTIMIZE/VACUUM/ANALYZE without hand-scheduled jobs."
+      - "Databricks recommends UC managed tables for all tabular data."
+    features:
+      - name: "Unity Catalog managed tables"
+        in_geo_status: GA
+      - name: "Predictive Optimization (auto OPTIMIZE/VACUUM/ANALYZE for UC managed tables)"
+        in_geo_status: GA
+    expected_impact: "Converting to managed unlocks PO (auto-maintenance cost avoidance + ~2x storage savings / >2x query speed on preview customers). Savings = manual-maintenance compute avoided + PO storage/scan gains (heuristic + cited PO figures)."
+    effort: High
+    priority_default: P2
+    scope: workspace
+    suggested_owner: "Data platform lead"
+    source: "https://docs.databricks.com/aws/en/optimizations/predictive-optimization ; https://learn.microsoft.com/en-us/azure/databricks/lakehouse-architecture/performance-efficiency/best-practices"
+    notes: "High effort (data movement + repointing consumers); sequence after quick wins. Ties to Tables page §3.4."
+
+  - id: STO-005
+    category: storage
+    title: "Enable deletion vectors on high-churn Delta tables to cut rewrite cost"
+    trigger: "table_delete_update_ops_month > 100 AND table_deletion_vectors_enabled = false AND table_size_gb > 100"
+    what_to_do:
+      - "Enable deletion vectors on tables with frequent DELETE/UPDATE/MERGE so row changes are marked, not rewritten (merge-on-read), cutting file-rewrite compute."
+      - "Ensure PO/OPTIMIZE runs periodically so deletion vectors are compacted."
+    features:
+      - name: "Deletion vectors (Delta merge-on-read)"
+        in_geo_status: GA
+    expected_impact: "Qualitative. Deletion vectors avoid full-file rewrites on DML, reducing write compute on high-churn tables. Savings heuristic (proportional to avoided rewrite bytes)."
+    effort: Low
+    priority_default: P3
+    scope: workspace
+    suggested_owner: "Data engineering lead"
+    source: "https://docs.databricks.com/aws/en/delta/deletion-vectors"
+    notes: "Deletion vectors are a GA Delta runtime feature (not region-gated); verify DBR support on target clusters."
+
+  # ===========================================================================
+  # CATEGORY: tagging & cost attribution
+  # ===========================================================================
+  - id: TAG-001
+    category: tagging
+    title: "Close the untagged-spend gap with a BU/Project/Env tag taxonomy"
+    trigger: "workspace_untagged_spend_pct > 0.2 AND workspace_spend_usd_month > 5000"
+    what_to_do:
+      - "Define a mandatory tag taxonomy: BusinessUnit, Project, Environment (dev/test/prod), Owner."
+      - "Apply tags to clusters/warehouses/jobs and enforce via cluster policies (policy-set custom tags)."
+      - "Report tag coverage % from system.billing.usage; drive untagged spend toward 0 with monthly audits."
+    features:
+      - name: "Custom tags + Compute policies (tag enforcement)"
+        in_geo_status: GA
+      - name: "system.billing.usage (billable usage)"
+        in_geo_status: GA
+    expected_impact: "Qualitative — enables chargeback/showback and pinpoints the real cost drivers so every other rec can be attributed and prioritised. Doc-recommended monitoring practice. No direct $ but unlocks targeted savings."
+    effort: Med
+    priority_default: P1
+    scope: global
+    suggested_owner: "FinOps / platform admin"
+    source: "https://docs.databricks.com/aws/en/lakehouse-architecture/cost-optimization/best-practices ; https://learn.microsoft.com/en-us/azure/databricks/admin/system-tables/"
+    notes: "P1 because attribution is the foundation for prioritising all other recs. Classic compute tagging only covers non-serverless — pair with TAG-002 for serverless."
+
+  - id: TAG-002
+    category: tagging
+    title: "Attribute serverless spend with budget policies (serverless usage policies)"
+    trigger: "workspace_serverless_spend_usd_month > 2000 AND workspace_serverless_budget_policy_coverage < 0.5"
+    what_to_do:
+      - "Create serverless usage (budget) policies containing BU/Project/Env tags and assign to users, groups, and service principals."
+      - "Tags auto-apply to serverless notebooks, jobs, pipelines, serving endpoints and apps, and land in billing records for chargeback."
+      - "Auto-assign a single policy per user; require selection where a user has multiple."
+    features:
+      - name: "Serverless usage / budget policies (serverless cost-attribution tagging)"
+        in_geo_status: PuPr
+    expected_impact: "Qualitative — extends cost attribution/chargeback to serverless compute (which classic tags miss). Doc-recommended for serverless cost reporting. Unlocks targeted serverless savings."
+    effort: Low
+    priority_default: P1
+    scope: global
+    suggested_owner: "FinOps / workspace admin"
+    source: "https://docs.databricks.com/aws/en/admin/usage/budget-policies ; https://www.databricks.com/blog/attribute-serverless-costs-departments-and-users-budget-policies"
+    notes: "PuPr in australiaeast (account-level, not region-gated) — surface with a Public Preview badge; still actionable."
+
+  - id: TAG-003
+    category: tagging
+    title: "Create Account Budgets with threshold email alerts per BU/project/workspace"
+    trigger: "account_has_no_budget = true OR bu_spend_usd_month > 10000 AND bu_has_no_budget_alert = true"
+    what_to_do:
+      - "In Account Console > Usage > Budgets, create budgets filtered by team/project/workspace (or account-wide)."
+      - "Set up to 4 monthly-threshold alerts (dollar amount + comma-separated email list) so owners are notified before overrun."
+      - "Wire budget breaches into the FinOps review cadence."
+    features:
+      - name: "Account-level Budgets (Account Console Usage > Budgets, threshold email alerts)"
+        in_geo_status: GA
+    expected_impact: "Qualitative + risk-avoidance. Prevents silent overruns; up to 4 thresholds with email alerts. risk_multiplier > 1 (no alerts = uncontrolled overrun risk)."
+    effort: Low
+    priority_default: P1
+    scope: global
+    suggested_owner: "FinOps lead"
+    source: "https://docs.databricks.com/aws/en/admin/account-settings/budgets ; https://learn.microsoft.com/en-us/azure/databricks/admin/account-settings/budgets"
+    notes: "Now GA in australiaeast (preview banner removed on 2026-07-06 doc rev per in_geo_matrix). Control-plane, not region-gated."
+
+  # ===========================================================================
+  # CATEGORY: ai / genai spend
+  # ===========================================================================
+  - id: AI-001
+    category: genai
+    title: "Cap GenAI spend with Unity AI Gateway budgets + rate limits"
+    trigger: "genai_endpoint_spend_usd_month > 1000 AND (endpoint_has_no_rate_limit = true OR account_has_no_ai_budget = true)"
+    what_to_do:
+      - "Enable Unity AI Gateway usage tracking on serving endpoints to attribute token spend by user/group/SP (usage-tracking table is GA)."
+      - "Set rate limits (QPM / TPM) per endpoint and per user/group/SP to cap runaway traffic (rate limiting is GA)."
+      - "Where the new Unity AI Gateway spend/budget hard-caps are available, set budgets that STOP requests at threshold (not just alert) — but flag as preview in AU."
+      - "For Genie LLM spend specifically, set Genie budgets (tracked via Unity AI Gateway) by account/workspace/group/user."
+    features:
+      - name: "Unity AI Gateway usage tracking + rate limits (on serving endpoints)"
+        in_geo_status: GA
+      - name: "Unity AI Gateway budgets / spend controls (unified per-user/team caps)"
+        in_geo_status: PrPr
+        gated: true
+    expected_impact: "Rate limits + usage tracking (GA) attribute and cap GenAI traffic; hard budget caps (preview) stop spend at threshold rather than alerting after the fact (Databricks). Risk-avoidance play — risk_multiplier > 1 for runaway token spend."
+    effort: Med
+    priority_default: P1
+    scope: global
+    suggested_owner: "AI platform lead / FinOps"
+    source: "https://learn.microsoft.com/en-us/azure/databricks/ai-gateway/ ; https://www.databricks.com/product/artificial-intelligence/unity-ai-gateway ; https://docs.databricks.com/aws/en/genie/budgets"
+    notes: "SPLIT STATUS: rate limits + usage tracking are GA in AU (actionable now); the newer unified spend/budget hard-caps are PrPr → gated:true, informational-only until GA. Genie budgets track LLM spend only; the SQL warehouse compute is billed + governed separately."
+
+  - id: AI-002
+    category: genai
+    title: "Control Foundation Model API cost + guarantee AU data residency for in-app LLM narration"
+    trigger: "fmapi_token_spend_usd_month > 500 OR app_llm_model NOT IN (in_region_models)"
+    what_to_do:
+      - "Pin any in-app / agent LLM narration to an in-region Claude model (databricks-claude-sonnet-4-6 / -sonnet-4-5 / -haiku-4-5) so data stays in the Australia Geo."
+      - "Never default to a cross-geo model (sonnet-5, fable-5, opus-4-5, opus-4-1) — those route data out of AU."
+      - "Verify the 'Enforce data processing within workspace Geography' toggle AND pin a non-cross-geo model to hard-guarantee residency (cross-geo is ON by default for non-US/EU geos)."
+      - "Prefer the cheaper haiku model for high-volume narration; reserve larger models for low-volume/high-value calls."
+    features:
+      - name: "Foundation Model APIs — Claude (Anthropic) pay-per-token, in-region"
+        in_geo_status: GA
+    expected_impact: "Qualitative + compliance. Model selection is both a cost lever (haiku << opus per token) and a residency control. risk_multiplier > 1 (cross-geo processing = residency non-compliance risk for AU customers)."
+    effort: Low
+    priority_default: P2
+    scope: global
+    suggested_owner: "AI platform lead"
+    source: "https://learn.microsoft.com/en-us/azure/databricks/machine-learning/model-serving/foundation-model-overview ; https://learn.microsoft.com/en-us/azure/databricks/resources/databricks-geos#cross-geo-processing"
+    notes: "In-region Claude models GA in australiaeast (native, no data egress). This governs the app's OWN LLM narration path per recommender_policy in in_geo_matrix."
+
+  # ===========================================================================
+  # CATEGORY: access / governance
+  # ===========================================================================
+  - id: GOV-001
+    category: access
+    title: "Remediate over-privileged prod access — move to least-privilege via groups"
+    trigger: "principal_has_MODIFY_or_ALL_on_prod = true AND (grant_is_direct_to_user = true OR principal_is_not_owner = true)"
+    what_to_do:
+      - "List principals with MODIFY / ALL PRIVILEGES on prod catalogs/schemas from system.information_schema.*_privileges."
+      - "Replace direct-to-user grants with group-based grants; scope groups to least privilege (USE/SELECT where write isn't needed)."
+      - "Remove broad account users / PUBLIC grants on prod securables; reduce admin sprawl."
+    features:
+      - name: "system.information_schema (privilege resolution)"
+        in_geo_status: GA
+      - name: "Automatic Identity Management (AIM) for Microsoft Entra ID"
+        in_geo_status: GA
+    expected_impact: "Qualitative + risk-avoidance. No direct $ but high governance/security risk if unaddressed (risk_multiplier > 1). Group-based least-privilege is the SPEC §3.1 risk-flag remediation."
+    effort: Med
+    priority_default: P1
+    scope: global
+    suggested_owner: "Security / UC admin"
+    source: "https://learn.microsoft.com/en-us/azure/databricks/admin/system-tables/ ; https://learn.microsoft.com/en-us/azure/databricks/admin/users-groups/automatic-identity-management/"
+    notes: "AIM (Entra ID) GA in australiaeast (Azure-only) — sync Entra groups so group-based grants stay accurate. Access page itself carries NO AI recs (SPEC §3.1); this rec lives in the hub."
+
+  - id: GOV-002
+    category: access
+    title: "Inventory + rotate stale / aged PATs and tokens"
+    trigger: "pat_age_days > 90 OR pat_last_used_days_ago > 60 OR workspace_pat_count > threshold"
+    what_to_do:
+      - "Inventory PATs/tokens with age + last-use (from audit)."
+      - "Revoke stale/unused tokens; rotate aged ones; prefer OAuth / service principals + short-lived tokens."
+      - "Set a token max-lifetime workspace policy."
+    features:
+      - name: "system.access.audit (audit logs)"
+        in_geo_status: PuPr
+    expected_impact: "Qualitative + risk-avoidance. Aged/unused tokens are a security exposure; no direct $ (risk_multiplier > 1)."
+    effort: Low
+    priority_default: P2
+    scope: workspace
+    suggested_owner: "Security / workspace admin"
+    source: "https://learn.microsoft.com/en-us/azure/databricks/admin/system-tables/"
+    notes: "system.access.audit is PuPr in AU — usable, badge as Public Preview."
+
+  - id: GOV-004
+    category: access
+    title: "Enforce cost-governance controls where budgets, PO, or tag coverage are missing"
+    trigger: "workspace_budget_policy_coverage < 0.5 OR workspace_po_adoption < 0.5 OR workspace_cluster_policy_coverage < 0.5 OR account_has_no_budget = true"
+    what_to_do:
+      - "Roll out the governance controls the Governance page scores as Warning/Critical: budget policies (TAG-002), account budgets (TAG-003), PO enablement (STO-001), cluster-policy coverage (BEH-002/TAG-001)."
+      - "Set each control's target (e.g. tag coverage > 90%, PO adoption > 80%, budget alerts on every BU) and track to Good."
+    features:
+      - name: "Account-level Budgets"
+        in_geo_status: GA
+      - name: "Serverless usage / budget policies"
+        in_geo_status: PuPr
+      - name: "Predictive Optimization"
+        in_geo_status: GA
+      - name: "Compute policies (cluster policies)"
+        in_geo_status: GA
+    expected_impact: "Qualitative + risk-avoidance. Aggregates the Governance-page gaps into one posture-improvement play; each sub-control has its own $ story (see referenced recs)."
+    effort: Med
+    priority_default: P2
+    scope: global
+    suggested_owner: "FinOps / platform admin"
+    source: "https://learn.microsoft.com/en-us/azure/databricks/admin/usage/ ; https://docs.databricks.com/aws/en/lakehouse-architecture/cost-optimization/best-practices"
+    notes: "Umbrella rec that maps directly to the Governance page (SPEC §3.5) scored tiles; expands into TAG-001/002/003 + STO-001 + BEH-002."
+
+  # ===========================================================================
+  # CATEGORY: tagging & cost attribution — spike detection (SPEC §9.3)
+  # ===========================================================================
+  - id: TAG-004
+    category: tagging
+    title: "Investigate + attribute a cost-driver that spiked month-on-month"
+    trigger: "driver_cost_mom_change_pct > 0.25 AND driver_cost_usd_month > 1500"
+    what_to_do:
+      - "Break the spiking billing_origin_product driver down to sku_name and workspace in system.billing.usage to localise the increase."
+      - "Confirm whether the jump is a legitimate workload change (new pipeline, backfill, launch) or waste (runaway interactive, missing auto-stop, an unbounded job)."
+      - "Attribute the delta to a BU / project via tags; if it is untagged, this is also a TAG-001 gap."
+      - "Wire a SQL alert / Account Budget threshold on the driver so the next spike is caught proactively, not in arrears."
+    features:
+      - name: "system.billing.usage (billable usage)"
+        in_geo_status: GA
+      - name: "Account-level Budgets (threshold email alerts)"
+        in_geo_status: GA
+    expected_impact: "Risk-avoidance + attribution. A material MoM driver jump is the earliest signal of waste or an unbudgeted workload; catching it early avoids a full-month overrun. risk_multiplier > 1 (uninvestigated spikes compound)."
+    effort: Low
+    priority_default: P1
+    scope: global
+    suggested_owner: "FinOps lead"
+    source: "https://learn.microsoft.com/en-us/azure/databricks/admin/system-tables/billing ; https://docs.databricks.com/aws/en/admin/account-settings/budgets"
+    notes: "Fires from the per-driver MoM %-change (spike detection) view on Overview/Workspaces. Feeds the Recommendations hub cost-spike trigger."
+
+# =============================================================================
+# End of catalog
+# =============================================================================

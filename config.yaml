@@ -1,0 +1,58 @@
+# FinOps Command Center — deploy-time configuration (SPEC §10, §14).
+# This file is an OPTIONAL config source. Every value here can also be supplied
+# (and overridden) by the matching environment variable in app.yaml / the App
+# UI → Settings → Environment. Env always wins over this file so a customer can
+# flip a flag at deploy time without editing code.
+#
+# Precedence (highest first):
+#   1. Environment variable (FINOPS_FEATURE_*, USE_LIVE, GENIE_SPACE_ID, …)
+#   2. This config.yaml
+#   3. Built-in default
+#
+# ---------------------------------------------------------------------------
+# Feature flags. The three AI/observability surfaces compose freely, e.g.:
+#   AI + DQM   : genie=true,  ai_narration=true,  dqm=true
+#   AI only    : genie=true,  ai_narration=true,  dqm=false
+#   DQM only   : genie=false, ai_narration=false, dqm=true
+#   neither    : genie=false, ai_narration=false, dqm=false
+# `writeback` is a separate, AI-independent flag (acknowledge/ignore state) and
+# is on by default in every one of those variants.
+#
+# The deterministic recommender, cost-attribution, and Genie-cost attribution
+# are ALWAYS on regardless of these flags — they call no model.
+# ---------------------------------------------------------------------------
+features:
+  # Ask Genie banner + /api/genie/ask SSE (Genie Conversation API).
+  genie: true
+  # LLM-rewritten rationale on recommendations (FMAPI Claude call). On by
+  # default; deploy with --no-ai (or set false) for a no-model build.
+  ai_narration: true
+  # Data Quality Monitoring tab + /api/dqm (Lakehouse Monitoring).
+  dqm: true
+  # Acknowledge/ignore controls on every alert surface + /api/acks. Independent
+  # of AI/Genie. State lives in a small Delta table via the read warehouse (no
+  # extra infra); the -t customer-lakebase deploy swaps in managed Postgres. Set
+  # false for a strictly read-only deployment (controls hidden, endpoints 404).
+  writeback: true
+
+# Data mode. false = seeded demo data; true = live system tables via a warehouse.
+use_live: false
+
+# Genie Space curated over the cost/usage/access tables. Blank ⇒ demo mode
+# returns canned streamed answers grounded in the demo data. (Data residency is
+# an account-level concern — point llm_endpoint/genie_space_id at in-region
+# resources if your account requires it; the app does not enforce a region.)
+genie_space_id: ""
+
+# SQL warehouse for live mode (USE_LIVE=true). Blank in demo.
+warehouse_id: ""
+
+# Catalog allowlist for the Access / Tables pages (empty = all non-system).
+catalog_scope: []
+
+# Dual-currency FX (SPEC §9): AUD = USD list price × fx_rate. Indicative only.
+fx_rate: 1.52
+
+# FMAPI Claude endpoint for ai_narration. Use an in-region model if your account
+# requires data residency. Blank ⇒ deterministic rule-templated text (no model call).
+llm_endpoint: databricks-claude-sonnet-4-6

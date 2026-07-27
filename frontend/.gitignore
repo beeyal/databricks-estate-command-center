@@ -1,0 +1,5 @@
+node_modules
+# dist IS committed so the app deploys straight from a Git folder in the
+# workspace UI (no build step there). Rebuild with `npm run build`.
+*.local
+.DS_Store

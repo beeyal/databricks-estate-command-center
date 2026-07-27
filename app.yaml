@@ -1,0 +1,106 @@
+command:
+  - uvicorn
+  - app:app
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+
+env:
+  # This is THE file the running app reads — edit these `value:`s to configure a
+  # deployment (customer name, warehouse, schemas, feature flags, org tables).
+  # These env values OVERRIDE config.yaml at runtime.
+  #   • Bundle deploy (`databricks bundle deploy`): edit values HERE.
+  #   • ./deploy.sh path: edit customise.yaml instead — deploy.sh writes the
+  #     matching values into this file for you on each deploy.
+
+  # Customer display label (cosmetic; shown in the app header / /api/config).
+  - name: FINOPS_CUSTOMER_NAME
+    value: "Acme Corp"
+
+  # Demo mode by default. Set USE_LIVE=true + DATABRICKS_WAREHOUSE_ID to read
+  # system tables live. Override in the App UI → Settings → Environment.
+  - name: USE_LIVE
+    value: "false"
+  - name: DATABRICKS_WAREHOUSE_ID
+    value: ""
+
+  # Dual-currency FX (SPEC §9): AUD = USD list price × this rate. Indicative.
+  - name: FINOPS_FX_AUD
+    value: "1.52"
+
+  # --- Deploy-time feature flags (SPEC §10) --------------------------------
+  # These env vars OVERRIDE config.yaml. deploy.sh --no-ai / --no-dqm set them.
+  # Four variants: AI+DQM / AI-only / DQM-only / neither. When a flag is off the
+  # matching surface is hidden AND its endpoint is inert (404) — no model/Genie
+  # call. The deterministic recommender, cost-attribution and Genie-cost view
+  # are ALWAYS on regardless (they call no model).
+  #
+  # All three default ON. To ship a feature OFF on the bundle / UI deploy path,
+  # just change its value to "false" here (a plain edit — no Python, no deploy.sh)
+  # then `databricks bundle deploy`; or set the same env var on the app page in
+  # the UI. (deploy.sh's --no-genie / --no-narration / --no-ai / --no-dqm are
+  # only shortcuts that write these same values.)
+  # features.genie — the Ask Genie banner + /api/genie/ask SSE.
+  - name: FINOPS_FEATURE_GENIE
+    value: "true"
+  # features.ai_narration — LLM rationale on recommendations (FMAPI Claude).
+  - name: FINOPS_FEATURE_AI_NARRATION
+    value: "true"
+  # features.dqm — the Data Quality Monitoring tab + /api/dqm.
+  - name: FINOPS_FEATURE_DQM
+    value: "true"
+  # features.writeback — acknowledge/ignore on every alert surface. Default on.
+  # LIVE-MODE NOTE: with the default Delta backend, writeback persists into a
+  # small table in your WRITEBACK SCHEMA — it needs `FINOPS_GOLD_SCHEMA` (below)
+  # OR `FINOPS_WRITEBACK_SCHEMA` set, AND the app's service principal granted
+  # CREATE+MODIFY on that schema. If neither schema is set, the app reports
+  # writeback OFF (the ack controls hide) rather than letting acks silently fail.
+  # The Lakebase target (`-t customer-lakebase`) needs none of this — it self-
+  # provisions its own schema. Demo mode always works (in-process).
+  - name: FINOPS_FEATURE_WRITEBACK
+    value: "true"
+  # Schema for the writeback (acknowledge/ignore) Delta table in live mode.
+  # Blank ⇒ falls back to FINOPS_GOLD_SCHEMA. Set one of them for live writeback.
+  - name: FINOPS_WRITEBACK_SCHEMA
+    value: ""
+
+  # Genie Space curated over cost/usage tables. Blank ⇒ demo mode returns canned
+  # streamed answers grounded in the demo data.
+  - name: GENIE_SPACE_ID
+    value: ""
+
+  # FMAPI Claude endpoint for ai_narration; blank ⇒ deterministic rule text.
+  - name: FINOPS_LLM_ENDPOINT
+    value: "databricks-claude-sonnet-4-6"
+  - name: FINOPS_ROLLUP_SCHEMA
+    value: ""
+  # Bump this string to invalidate all persisted payload-cache entries at once
+  # (e.g. after editing the workspace->BU mapping or other reference data the
+  # built payloads bake in). Old-version rows age out on their own.
+  - name: FINOPS_CACHE_VERSION
+    value: "2"
+  # Gold-table serving schema (nightly finops_gold_sync writes here; app reads it
+  # in ~1s). REQUIRED in live mode — the app refuses to boot with USE_LIVE=true and
+  # this blank (account-wide system-table scans per request aren't production-
+  # viable). Demo mode ignores it. Read-only-eval escape hatch: FINOPS_ALLOW_LIVE_
+  # NO_GOLD=true (slow, not for prod).
+  - name: FINOPS_GOLD_SCHEMA
+    value: ""
+  - name: FINOPS_INGEST_SCHEMA
+    value: ""
+  # LEAVE BLANK for a normal `databricks bundle deploy` — the bundle already
+  # creates the two jobs. Only set this on a UI-only "Create app" deploy (no
+  # bundle), to the workspace folder holding the code, so the app can self-create
+  # the jobs. Setting it on a bundle deploy would create DUPLICATE jobs.
+  - name: FINOPS_SOURCE_PATH
+    value: ""
+  - name: FINOPS_JOB_RUN_AS
+    value: ""
+  # Optional customer table mapping workspace_id -> business unit (+ owner). Blank
+  # ⇒ the app hides all BU columns/filters/splits (no system-table org source).
+  - name: FINOPS_WORKSPACE_BU_TABLE
+    value: ""
+  # Optional user -> team mapping table for the Adoption tab. Blank ⇒ team hidden.
+  - name: FINOPS_USER_TEAM_TABLE
+    value: ""
