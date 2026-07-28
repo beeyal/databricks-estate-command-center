@@ -33,10 +33,12 @@ tools on your laptop. Everything below happens in the Databricks UI.
 > fails to start. Set those two values + the grant and it's reading your real estate.
 
 > [!NOTE]
-> **The whole thing is six steps:** ① add the code → ② set two values (warehouse + gold
-> schema) → ③ run one deploy cell → ④ grant read access → ⑤ turn on the daily jobs → ⑥
-> *(optional)* light up BU/team. The app boots after ③ (showing demo + a setup banner
-> until ②/④ are done); ②, ④ and ⑤ connect it to your real data.
+> **The whole thing is six steps** — **①–⑤ are the required path; ⑥ is optional.**
+> ① add the code → ② set two values (warehouse + gold schema) → ③ run one deploy cell →
+> ④ grant read access → ⑤ turn on the daily jobs → ⑥ *(optional)* light up BU/team.
+> The app boots after ③ (showing demo data + a "finish setup" banner until ②/④ are done);
+> ②, ④ and ⑤ connect it to your real data. Throughout, anything in a **collapsed *FYI* /
+> *conditional* box is skippable** — the required steps are the plain, numbered ones.
 
 ---
 
@@ -75,9 +77,9 @@ Click **Create**. The code lands at `/Workspace/Users/<you>/databricks-estate-co
 
 ## Step ② — Set your configuration
 
-**There is one file to edit: `app.yaml`.** (No `config.yaml`, no `customise.yaml` — just
-this one.) Open it in the Git folder. It's a list of `- name: … / value: …` pairs, each
-with a comment explaining what it does and what happens if you leave it blank.
+**There is one file to edit: `app.yaml`.** Open it in the Git folder. It's a list of
+`- name: … / value: …` pairs, each with a comment explaining what it does and what happens
+if you leave it blank.
 
 The app **ships in live mode** (`USE_LIVE: "true"`). Until you set the two values below it
 boots showing **demo data with a "finish setup to go live" banner** — so you can deploy
@@ -157,28 +159,27 @@ This creates the app and the two scheduled jobs, then prints the app's
 URL. You don't sign in or paste a token — the notebook runs **as you**, so the deploy
 authenticates automatically. Open the printed URL and the app is live.
 
-> [!NOTE]
-> **Which target — `customer` or `customer-delta`?**
-> **Use `customer` (the recommended default).** The only thing the deploy target decides is
-> **where the acknowledge/dismiss state is stored** — the app itself is identical either way:
->
-> | Target | Acknowledge/dismiss state stored in | When to pick it |
-> |---|---|---|
-> | **`customer`** *(recommended)* | A small managed **Lakebase (Postgres)** instance the bundle creates + wires for you. Snappy at any scale; fully self-provisioned (nothing to set). | **The default. Use this** unless you specifically don't want a managed-Postgres instance. Adds one small always-on instance (~tens of $/mo). |
-> | **`customer-delta`** | A tiny **Delta** table via your warehouse. Zero extra infrastructure, zero extra cost. | The fallback for **"don't use Lakebase."** In live mode it needs a writeback schema + one grant (below). |
->
-> **On `customer` (Lakebase) you set nothing for writeback** — the bundle creates the
-> instance, binds it, and auto-provisions the app's Postgres role. (If you ever delete +
-> recreate the app, set a fresh `FINOPS_LAKEBASE_SCHEMA` so the new app owns its own schema.)
->
-> **On `customer-delta`** writeback uses a `finops_ack_status` Delta table in your writeback
-> schema — leave `FINOPS_WRITEBACK_SCHEMA` blank to reuse `FINOPS_GOLD_SCHEMA` (the app
-> auto-creates the table; the Step ④ grant covers it). If it can't write, the app reports
-> writeback off and hides the controls — never a silent loss.
->
-> Both are a single `bundle deploy`. To switch targets later, run
-> `databricks bundle deployment bind estate estate-command-center -t <target>` once first so
-> the bundle adopts the existing app instead of erroring that it already exists.
+**`-t customer` is the target to use.** It stores the acknowledge/dismiss state in a
+small managed Lakebase (Postgres) instance the bundle creates and wires for you —
+**nothing to configure.** (This adds one small always-on instance, ~tens of $/mo.)
+
+<details>
+<summary><b>FYI — don't want a managed-Postgres instance?</b> (optional; skip if using the default)</summary>
+
+<br>
+
+Deploy with **`-t customer-delta`** instead of `-t customer`. Identical app, but the
+acknowledge/dismiss state goes in a tiny **Delta** table via your warehouse — no extra
+infrastructure, no extra cost. On that target, in live mode, do the optional writeback
+grant listed under Step ④'s conditional grants (leave `FINOPS_WRITEBACK_SCHEMA` blank to
+reuse `FINOPS_GOLD_SCHEMA`; the app auto-creates the table). If it can't write, the app
+just hides the ack controls — it never loses a dismissal silently.
+
+To switch an already-deployed app between targets, run
+`databricks bundle deployment bind estate estate-command-center -t <target>` once first, so
+the bundle adopts the running app instead of erroring that it already exists.
+
+</details>
 
 ---
 
@@ -216,66 +217,63 @@ GRANT USE SCHEMA, SELECT ON SCHEMA system.lakeflow           TO `<app-sp>`;  -- 
 > `USE CATALOG` on `system`) — `SELECT` alone gives `INSUFFICIENT_PERMISSIONS: … does
 > not have USE SCHEMA`. The combined grants above cover it.
 
-> [!NOTE]
-> **Access page scope (optional, whole-estate coverage).** The Access page's grant
-> graph reads `system.information_schema.table_privileges`, which Unity Catalog
-> **row-filters to only the securables the app's service principal can see**. With
-> just the `system` grants above, the Access tab shows the grants on catalogs the
-> app SP already has visibility into — **not necessarily your whole estate**. To
-> make it cover everything, give the app SP broad *visibility* (not data access):
-> `GRANT BROWSE ON CATALOG <catalog> TO \`<app-sp>\`;` per catalog you want covered
-> (a metastore admin can do this estate-wide). `BROWSE` is least-privilege — it
-> makes objects **visible** in `information_schema` without granting `SELECT` on the
-> data. This is **optional**: every other tab works from `system.*` alone, and the
-> Access page itself notes when its graph is scoped. Decide per your security
-> posture — widening the app SP's reach across all catalogs is a real trade-off.
->
-> **Generate the BROWSE grants for every catalog automatically** — rather than
-> hand-writing one per catalog, run this as a metastore admin: it *produces* the
-> GRANT statements from your live catalog list, which you then review and run.
-> ```sql
-> -- 1) Generate: lists a GRANT BROWSE for every catalog except the system ones.
-> SELECT 'GRANT BROWSE ON CATALOG `' || catalog_name ||
->        '` TO `<app-service-principal>`;' AS grant_stmt
-> FROM system.information_schema.catalogs
-> WHERE catalog_name NOT IN ('system','__databricks_internal','samples')
-> ORDER BY catalog_name;
-> -- 2) Copy the grant_stmt column from the results and run it (review first).
-> ```
-> Replace `<app-service-principal>` with the app's SP (its client-id or name). Re-run
-> whenever you add catalogs. (Databricks SQL has no native loop, so this
-> generate-then-run pattern is the idiomatic way to grant across many catalogs.)
+<details>
+<summary><b>FYI — widen the Access page to your whole estate</b> (advanced, optional; the app works fine without it)</summary>
+
+<br>
+
+The Access page's grant graph reads `system.information_schema.table_privileges`, which
+Unity Catalog **row-filters to only the securables the app's SP can see**. With just the
+`system` grants above, the Access tab covers the catalogs the app SP already sees — **not
+necessarily your whole estate**. To cover everything, give the app SP broad *visibility*
+(not data access): `GRANT BROWSE ON CATALOG <catalog> TO \`<app-sp>\`;` per catalog.
+`BROWSE` is least-privilege — it makes objects **visible** in `information_schema` without
+granting `SELECT` on the data. Optional: every other tab works from `system.*` alone, and
+the Access page notes when its graph is scoped. Widening the app SP's reach across all
+catalogs is a real security trade-off — decide per your posture.
+
+Generate the grants for every catalog automatically (run as a metastore admin; review before running):
+```sql
+SELECT 'GRANT BROWSE ON CATALOG `' || catalog_name ||
+       '` TO `<app-service-principal>`;' AS grant_stmt
+FROM system.information_schema.catalogs
+WHERE catalog_name NOT IN ('system','__databricks_internal','samples')
+ORDER BY catalog_name;
+-- Copy the grant_stmt column from the results and run it.
+```
+
+</details>
+
+**That's the whole required grant** (a + b). The three below are **conditional — skip any
+that don't apply to you**; most deployments need none of them.
+
+<details>
+<summary><b>Conditional grants</b> — only if you use Data Quality, a custom Genie Space, or the Delta writeback target (click to expand)</summary>
+
+<br>
+
+- **Data Quality tab** (`FINOPS_FEATURE_DQM: "true"`) — also run
+  `GRANT USE SCHEMA, SELECT ON SCHEMA system.data_quality_monitoring TO \`<app-sp>\`;`.
+  That schema **only exists once someone has enabled anomaly detection** on a schema; if you
+  don't use Data Quality Monitoring the grant errors with `SCHEMA_DOES_NOT_EXIST` — in that
+  case just leave the tab off (`FINOPS_FEATURE_DQM: "false"` in Step ②) and skip this.
+- **Your own Genie Space** — *only* if Ask Genie is on **and** you set `GENIE_SPACE_ID` to a
+  Space you curated: grant the app SP **`CAN RUN`** on it (Genie Space → Share → add the app
+  SP as *Can Run*). If you leave `GENIE_SPACE_ID` blank (the default) the deploy auto-creates
+  a Space the app owns — no grant needed.
+- **`-t customer-delta` target only** — the recommended `-t customer` (Lakebase) target
+  needs none of this. On `customer-delta`, grant the app SP `CREATE`/`MODIFY` on its
+  writeback schema: `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<app-sp>\`;`
+  (that schema is `FINOPS_GOLD_SCHEMA`, or `FINOPS_WRITEBACK_SCHEMA` if you set one). Skip if
+  `FINOPS_FEATURE_WRITEBACK: "false"`.
+
+</details>
 
 > [!NOTE]
-> **Only if you use the Data Quality tab** (`FINOPS_FEATURE_DQM: "true"`), also run
-> `GRANT USE SCHEMA, SELECT ON SCHEMA system.data_quality_monitoring TO \`<app-sp>\`;`.
-> That schema **only exists once someone has enabled anomaly detection on a schema** — if
-> you don't use Data Quality Monitoring it won't exist and the grant errors with
-> `SCHEMA_DOES_NOT_EXIST`. In that case just leave the tab off with
-> `FINOPS_FEATURE_DQM: "false"` (step ②) and skip this grant entirely.
-
-> [!NOTE]
-> **Only if Ask Genie is on** (`FINOPS_FEATURE_GENIE: "true"`) **and you point
-> `GENIE_SPACE_ID` at your own Genie Space** — grant the app's service principal
-> **`CAN RUN`** on that Space (Genie Space → Share → add the app SP as *Can Run*).
-> Without it the Ask Genie banner can't start conversations. If you leave
-> `GENIE_SPACE_ID` blank the deploy auto-creates a Space owned by the app SP and no
-> grant is needed.
-
-> [!NOTE]
-> **Only on the `-t customer-delta` fallback target** (the recommended `-t customer`
-> Lakebase target needs none of this — its writeback state lives in the bound Postgres).
-> On `customer-delta` the app persists acknowledge/ignore state in a `finops_ack_status`
-> table in your writeback schema, so grant the **app's own** service principal
-> `CREATE`/`MODIFY` on that schema:
-> `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<app-sp>\`;` (the writeback
-> schema is `FINOPS_GOLD_SCHEMA` or `FINOPS_WRITEBACK_SCHEMA` from step ②). Skip entirely
-> if you set `FINOPS_FEATURE_WRITEBACK: "false"`.
-
-> [!IMPORTANT]
-> All three need an **account / metastore + workspace admin** — the app's own SP is
-> read-only and can't grant itself anything. If a grant is ever missing, the affected tab
-> shows a clear message naming the exact statement to run, never a made-up number.
+> **FYI — who runs these grants.** They need an **account/metastore + workspace admin**;
+> the app's own SP is read-only and can't grant itself anything. If a grant is ever missing,
+> the affected tab shows a clear message naming the exact statement to run — never a made-up
+> number.
 
 ---
 
