@@ -166,6 +166,12 @@ class LiveProvider:
                 f"SUM(CASE WHEN u.billing_origin_product='JOBS' AND u.sku_name NOT ILIKE '%SERVERLESS%' THEN {_PRICE} ELSE 0 END) jobs_classic, "
                 f"SUM(CASE WHEN u.sku_name ILIKE '%SQL%' AND u.sku_name NOT ILIKE '%SERVERLESS%' THEN {_PRICE} ELSE 0 END) sql_classic, "
                 f"SUM(CASE WHEN u.sku_name ILIKE '%SERVERLESS%' THEN {_PRICE} ELSE 0 END) serverless, "
+                # serverless SQL ONLY (serverless SKU that is a SQL warehouse) — the
+                # idle/auto-stop lever applies to this, NOT to serverless jobs/DLT.
+                # Without splitting it out, the idle rec counted serverless-jobs spend
+                # as an "idle SQL warehouse" (a jobs-heavy workspace reads ~100% SQL-
+                # idle because nobody runs interactive queries there).
+                f"SUM(CASE WHEN u.sku_name ILIKE '%SERVERLESS%' AND u.sku_name ILIKE '%SQL%' THEN {_PRICE} ELSE 0 END) serverless_sql, "
                 f"SUM(CASE WHEN u.billing_origin_product IN ({genai_in}) THEN {_PRICE} ELSE 0 END) genai "
                 f"FROM system.billing.usage u {_PRICE_JOIN} "
                 "WHERE u.usage_date>=date_trunc('MONTH',current_date()) GROUP BY 1",
@@ -173,7 +179,7 @@ class LiveProvider:
             out: dict[str, dict[str, float]] = {}
             for r in rows:
                 out[str(r.get("ws"))] = {k: live._f(r.get(k)) for k in
-                    ("all_purpose", "jobs_classic", "sql_classic", "serverless", "genai")}
+                    ("all_purpose", "jobs_classic", "sql_classic", "serverless", "serverless_sql", "genai")}
             return out
         return self._memo("mix", build)
 
@@ -306,6 +312,7 @@ class LiveProvider:
                 jobs_classic = m.get("jobs_classic", 0.0)
                 sql_classic = m.get("sql_classic", 0.0)
                 serverless = m.get("serverless", 0.0)
+                serverless_sql = m.get("serverless_sql", 0.0)
                 genai = m.get("genai", 0.0)
                 spend = w["spend_usd_month"]
                 ws_metrics[w["workspace"]] = {
@@ -313,6 +320,7 @@ class LiveProvider:
                     "spend_usd_month": spend,
                     "all_purpose_cost": round(all_purpose), "jobs_classic_cost": round(jobs_classic),
                     "sql_classic_cost": round(sql_classic), "serverless_cost": round(serverless),
+                    "serverless_sql_cost": round(serverless_sql),
                     "classic_cluster_cost": round(all_purpose + jobs_classic + sql_classic),
                     "genai_cost": round(genai),
                     "interactive_share": round((all_purpose / spend) if spend else 0.0, 3),
@@ -370,11 +378,11 @@ class LiveProvider:
                      "addressable_usd_month": (
                          ws_metrics.get(w["workspace"], {}).get("all_purpose_cost", 0)
                          + ws_metrics.get(w["workspace"], {}).get("sql_classic_cost", 0)
-                         + ws_metrics.get(w["workspace"], {}).get("serverless_cost", 0))}
+                         + ws_metrics.get(w["workspace"], {}).get("serverless_sql_cost", 0))}
                     for w in workspaces
                     if w.get("idle_pct", 0.0) >= 0.20
                     and (ws_metrics.get(w["workspace"], {}).get("all_purpose_cost", 0)
                          + ws_metrics.get(w["workspace"], {}).get("sql_classic_cost", 0)
-                         + ws_metrics.get(w["workspace"], {}).get("serverless_cost", 0)) > 0],
+                         + ws_metrics.get(w["workspace"], {}).get("serverless_sql_cost", 0)) > 0],
             }
         return self._memo("estate", build)

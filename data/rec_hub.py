@@ -289,7 +289,8 @@ def estate_metrics() -> dict[str, Any]:
         all_purpose = spend("All-Purpose Compute")
         jobs_classic = spend("Jobs Classic")
         sql_classic = spend("SQL Warehouse (Classic)")
-        serverless = spend("Serverless SQL") + spend("Serverless Jobs") + spend("DLT / Lakeflow")
+        serverless_sql = spend("Serverless SQL")
+        serverless = serverless_sql + spend("Serverless Jobs") + spend("DLT / Lakeflow")
         fmapi = spend("Foundation Model APIs") + spend("Model Serving")
         interactive_share = (all_purpose / w["spend_usd_month"]) if w["spend_usd_month"] else 0.0
         ws_metrics[w["workspace"]] = {
@@ -300,6 +301,7 @@ def estate_metrics() -> dict[str, Any]:
             "jobs_classic_cost": round(jobs_classic),
             "sql_classic_cost": round(sql_classic),
             "serverless_cost": round(serverless),
+            "serverless_sql_cost": round(serverless_sql),
             "classic_cluster_cost": round(all_purpose + jobs_classic + sql_classic),
             "genai_cost": round(fmapi),
             "interactive_share": round(interactive_share, 3),
@@ -320,7 +322,7 @@ def estate_metrics() -> dict[str, Any]:
         if w["idle_pct"] < 0.20:
             continue
         m = ws_metrics.get(w["workspace"], {})
-        addressable = m.get("all_purpose_cost", 0) + m.get("sql_classic_cost", 0) + m.get("serverless_cost", 0)
+        addressable = m.get("all_purpose_cost", 0) + m.get("sql_classic_cost", 0) + m.get("serverless_sql_cost", 0)
         if addressable <= 0:
             continue
         idle_warehouses.append({
