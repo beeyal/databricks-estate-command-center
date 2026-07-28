@@ -237,6 +237,10 @@ export function fetchWarehouses(
 
 export interface ClustersEnvelope extends Envelope<ClusterRow[], ClusterSummary> {
   message?: string;
+  /** Distinct clusters active in the window (universe behind the top-N list). */
+  total_active?: number;
+  shown?: number;
+  truncated?: boolean;
 }
 export function fetchClusters(
   params: Record<string, string> = {},

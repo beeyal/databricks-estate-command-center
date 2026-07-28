@@ -351,14 +351,19 @@ def estate_metrics() -> dict[str, Any]:
     # The reference frames spike detection at the cost-driver level. Fire
     # on any billing_origin_product driver up >= 25% MoM with material $.
     estate_drivers = demo.get_cost_drivers()
+    # mom_pct is None for a NEW driver ($0 → spend); treat as a spike (infinite
+    # growth) and guard the None so the >= comparison can't crash. Mirrors the
+    # live path (data/rec_hub_live.py).
     driver_spikes = [
         {
-            "driver": mm["driver"], "label": mm["label"], "mom_pct": mm["mom_pct"],
+            "driver": mm["driver"], "label": mm["label"], "mom_pct": mm.get("mom_pct"),
+            "is_new": bool(mm.get("is_new")),
             "prev_usd_month": mm["prev_usd_month"], "spend_usd_month": mm["spend_usd_month"],
             "delta_usd": mm["delta_usd"],
         }
         for mm in estate_drivers["mom"]
-        if mm["mom_pct"] >= 0.25 and mm["spend_usd_month"] >= 1500
+        if mm["spend_usd_month"] >= 1500
+        and (mm.get("is_new") or (mm.get("mom_pct") is not None and mm["mom_pct"] >= 0.25))
     ]
     driver_spikes.sort(key=lambda s: -s["delta_usd"])
 
@@ -621,9 +626,15 @@ def _strategic_plays() -> list[dict[str, Any]]:
 
     # --- TAG-004: investigate a cost-driver that spiked MoM (SPEC §9.3) --------
     for spk in m["driver_spikes"]:
+        # mom_pct is None for a NEW driver ($0 → spend) — describe it as "new this
+        # month" rather than crashing on None*100 or printing a nonsense percent.
+        pct = spk.get("mom_pct")
+        headline = (f"{spk['label']} is a new cost driver this month"
+                    if spk.get("is_new") or pct is None
+                    else f"{spk['label']} +{round(pct * 100)}% MoM")
         emit("TAG-004", scope_label=spk["label"], est_savings=0,
              evidence=[
-                 f"{spk['label']} +{round(spk['mom_pct'] * 100)}% MoM",
+                 headline,
                  f"+${round(spk['delta_usd']):,}/mo",
                  f"${round(spk['spend_usd_month']):,}/mo now",
              ], savings_basis=_RISK_BASIS, severity=1.3, risk_multiplier=1.3)

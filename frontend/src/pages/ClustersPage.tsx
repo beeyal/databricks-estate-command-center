@@ -161,6 +161,13 @@ export function ClustersPage() {
             <InfoTip text="Scope: cluster_source IN ('UI','API') with utilisation in the selected window. Most clusters in an estate are ephemeral JOB/PIPELINE clusters — those are excluded here by design and covered by the Jobs tab. Built on system.compute.clusters (config), node_timeline (CPU/memory) and billing.usage (cost). Surfaces sizing/idle/auto-stop waste — NOT per-query tuning (that telemetry isn't in system tables; SQL-warehouse query tuning is on Query Advisor)." />
           </div>
 
+          {data?.truncated && (data?.total_active ?? 0) > 0 && (
+            <div className="text-xs text-neutral -mt-1">
+              Showing the top <span className="tabular-nums">{data.shown ?? rows.length}</span> interactive clusters by cost of{" "}
+              <span className="tabular-nums">{data.total_active}</span> active in this window — the KPIs above cover these top clusters.
+            </div>
+          )}
+
           <DataTable
             columns={columns}
             updating={loading && !!data}

@@ -332,7 +332,26 @@ def clusters_live(warehouse_id: str, days: int = 30) -> dict[str, Any]:
             "cpu_timeline": tlmap.get(str(r.get("cid") or ""), []),
             "dbr_version": str(r.get("dbr") or ""),
         }))
-    return {"clusters": out, "summary": summarize(out), "message": ""}
+    total_active = _active_cluster_count(warehouse_id, days)
+    return {"clusters": out, "summary": summarize(out),
+            "total_active": total_active, "shown": len(out),
+            "truncated": bool(total_active and total_active > len(out)), "message": ""}
+
+
+def _active_cluster_count(warehouse_id: str, days: int) -> int:
+    """Distinct interactive (UI/API) clusters with node_timeline activity in the
+    window — the TRUE universe behind the top-200-by-DBU list, so the UI can say
+    "top 200 of N" instead of implying the shown 200 are all clusters. Best-effort
+    → 0 (UI then omits the note)."""
+    from data import live
+    try:
+        r = live._run(warehouse_id,
+            "SELECT approx_count_distinct(cluster_id) n FROM system.compute.node_timeline "
+            f"WHERE start_time>=dateadd(day,-{days},current_date()) AND start_time<current_date()",
+            "cluster universe count")
+        return int(live._f(r[0].get("n"))) if r else 0
+    except Exception:  # noqa: BLE001 — best-effort
+        return 0
 
 
 # Config-only query (no util/cost joins) — reused by the accumulator reader.
@@ -425,7 +444,10 @@ def clusters_from_daily(warehouse_id: str, gold_schema: str, days: int = 30) -> 
             "cpu_timeline": tlmap.get(cid, []), "dbr_version": str(r.get("dbr") or ""),
         }))
     out.sort(key=lambda x: -x["cost_usd_month"])
-    return {"clusters": out, "summary": summarize(out), "message": ""}
+    total_active = _active_cluster_count(warehouse_id, days)
+    return {"clusters": out, "summary": summarize(out),
+            "total_active": total_active, "shown": len(out),
+            "truncated": bool(total_active and total_active > len(out)), "message": ""}
 
 
 if __name__ == "__main__":

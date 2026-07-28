@@ -329,12 +329,17 @@ class LiveProvider:
             over_priv = [r for r in risks if r["risk"] == "over-privileged"]
 
             estate_drivers = self.get_cost_drivers()
+            # mom_pct is None for a NEW driver ($0 last month → spend now); it must
+            # be treated as a spike (infinite growth), not crash the >= comparison.
+            # Guard the None and include is_new drivers with material spend.
             driver_spikes = sorted(
-                [{"driver": mm["driver"], "label": mm["label"], "mom_pct": mm["mom_pct"],
+                [{"driver": mm["driver"], "label": mm["label"], "mom_pct": mm.get("mom_pct"),
+                  "is_new": bool(mm.get("is_new")),
                   "prev_usd_month": mm["prev_usd_month"], "spend_usd_month": mm["spend_usd_month"],
                   "delta_usd": mm["delta_usd"]}
                  for mm in estate_drivers.get("mom", [])
-                 if mm["mom_pct"] >= 0.25 and mm["spend_usd_month"] >= 1500],
+                 if mm["spend_usd_month"] >= 1500
+                 and (mm.get("is_new") or (mm.get("mom_pct") is not None and mm["mom_pct"] >= 0.25))],
                 key=lambda s: -s["delta_usd"])
 
             return {

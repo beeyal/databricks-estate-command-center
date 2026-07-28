@@ -1543,10 +1543,14 @@ def get_clusters(
                     or cl.clusters_live(WAREHOUSE_ID, days))
         rows = payload.get("clusters", [])
         message = payload.get("message", "")
+        total_active = payload.get("total_active", 0)
+        truncated = bool(payload.get("truncated"))
         live_source = True
     else:
         rows = cl.clusters_demo(days)
         message = ""
+        total_active = 0
+        truncated = False
         live_source = False
 
     ws = _multi(workspace); fi = _multi(finding)
@@ -1570,6 +1574,10 @@ def get_clusters(
     )
     wrapped = _wrap(rows, live_source=live_source)
     wrapped["summary"] = summary
+    wrapped["shown"] = len(rows)
+    if total_active:
+        wrapped["total_active"] = total_active
+        wrapped["truncated"] = bool(truncated)
     if message:
         wrapped["message"] = message
     if ack_sink is not None:
