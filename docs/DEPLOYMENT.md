@@ -53,7 +53,7 @@ the matching environment into `app.yaml` (and `catalog_scope` into `config.yaml`
 | `features.genie` | `FINOPS_FEATURE_GENIE` | Ask Genie banner + `/api/genie/ask`. |
 | `features.ai_narration` | `FINOPS_FEATURE_AI_NARRATION` | LLM rewrite of recommendation rationale. |
 | `features.dqm` | `FINOPS_FEATURE_DQM` | Data Quality Monitoring tab + `/api/dqm`. |
-| `gold_schema` | `FINOPS_GOLD_SCHEMA` | **Required in live mode.** Schema (e.g. `main.finops_gold`) the nightly `finops_gold_sync` job writes estate payloads + a table-size census + warehouse/cluster daily history into; the app reads them in ~1s. The app **refuses to boot** in live mode without it (account-wide system-table scans per request aren't production-viable). Read-only-eval escape hatch: `FINOPS_ALLOW_LIVE_NO_GOLD=true` (slow). |
+| `gold_schema` | `FINOPS_GOLD_SCHEMA` | **Required in live mode.** Schema (e.g. `main.finops_gold`) the nightly `finops_gold_sync` job writes estate payloads + a table-size census + warehouse/cluster daily history into; the app reads them in ~1s. Without it (or a warehouse) in live mode the app **falls back to demo + a setup banner** rather than failing to boot. Read-only-eval escape hatch: `FINOPS_ALLOW_LIVE_NO_GOLD=true` (slow). |
 | `workspace_bu_table` | `FINOPS_WORKSPACE_BU_TABLE` | Customer table mapping `workspace_id → bu` (+ optional `owner`). Blank ⇒ BU dimension hidden. |
 | `user_team_table` | `FINOPS_USER_TEAM_TABLE` | Customer table mapping `user → team` (Adoption tab). Blank ⇒ team dimension hidden. |
 | `ingest_schema` | `FINOPS_INGEST_SCHEMA` | UC schema the daily `finops_admin_sync` job writes the `<ingest_schema>.finops_admin` Delta table into (budgets, policies, tokens, groups, monitors). Blank ⇒ admin-API panels show a "run finops_admin_sync" prompt. |
@@ -290,8 +290,9 @@ serverless SQL warehouse that scales to zero between reads**. Day-old data is fi
 for FinOps trending, and the size census also powers the Tables tab sizes + the
 **cold-storage** (large + rarely-read) view. `gold_schema` is **required in live
 mode** — the app's reads are over account-wide system tables (tens of millions of
-rows), so live-per-request isn't production-viable and the app refuses to boot in
-live mode without it (escape hatch for read-only evals: `FINOPS_ALLOW_LIVE_NO_GOLD`).
+rows), so live-per-request isn't production-viable and without it (or a warehouse)
+the app falls back to demo mode with a setup banner rather than failing to boot
+(escape hatch for read-only evals: `FINOPS_ALLOW_LIVE_NO_GOLD`).
 
 > The **Warehouse Monitor** and **Cluster Efficiency** tabs are the two heaviest
 > live scans (`system.query.history` aggregation and per-node/per-minute

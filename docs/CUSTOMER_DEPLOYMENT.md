@@ -24,18 +24,19 @@ tools on your laptop. Everything below happens in the Databricks UI.
 > ```sh
 > %sh
 > cd /Workspace/Users/<you>/databricks-estate-command-center   # the Git folder from Step ①
-> databricks bundle deploy -t customer              # creates the app + jobs
+> databricks bundle deploy -t customer              # creates the app + jobs (Lakebase-backed)
 > databricks bundle run   estate -t customer        # starts it, prints the URL
 > ```
-> Run that in a notebook cell and the app is live **in demo mode** — no config, no
-> grants, nothing to build. Then edit **three values** in `app.yaml` (Step ②) and
-> **grant read access** (Step ④) to point it at your real data. That's it.
+> Run that in a notebook cell and the app comes up immediately. It ships in **live
+> mode**, so until you set your warehouse + gold schema (Step ②) and grant read access
+> (Step ④) it shows **demo data with a "finish setup to go live" banner** — it never
+> fails to start. Set those two values + the grant and it's reading your real estate.
 
 > [!NOTE]
-> **The whole thing is six steps:** ① add the code → ② set three values → ③ run one
-> deploy cell → ④ grant read access → ⑤ turn on the daily jobs → ⑥ *(optional)* light up
-> BU/team. Steps ① – ③ stand the app up (it runs immediately in safe demo mode); ④ – ⑤
-> connect it to your data.
+> **The whole thing is six steps:** ① add the code → ② set two values (warehouse + gold
+> schema) → ③ run one deploy cell → ④ grant read access → ⑤ turn on the daily jobs → ⑥
+> *(optional)* light up BU/team. The app boots after ③ (showing demo + a setup banner
+> until ②/④ are done); ②, ④ and ⑤ connect it to your real data.
 
 ---
 
@@ -78,17 +79,13 @@ Click **Create**. The code lands at `/Workspace/Users/<you>/databricks-estate-co
 this one.) Open it in the Git folder. It's a list of `- name: … / value: …` pairs, each
 with a comment explaining what it does and what happens if you leave it blank.
 
-> [!TIP]
-> **Want to see it first?** Do nothing here and jump to Step ③ — deploying as-is runs the
-> app in **demo mode** (realistic synthetic data, no warehouse, no grants). Come back when
-> you're ready to point it at your real estate.
+The app **ships in live mode** (`USE_LIVE: "true"`). Until you set the two values below it
+boots showing **demo data with a "finish setup to go live" banner** — so you can deploy
+first and configure after, and it never fails to start.
 
-### To go live, set these **3** values (everything else can stay as-is):
+### Set these **2** values to read your real estate (everything else can stay as-is):
 
 ```yaml
-  - name: USE_LIVE
-    value: "true"                              # read your real system tables
-
   - name: DATABRICKS_WAREHOUSE_ID
     value: "<serverless-sql-warehouse-id>"     # a serverless SQL warehouse in THIS workspace
 
@@ -99,23 +96,24 @@ with a comment explaining what it does and what happens if you leave it blank.
 That's the whole required configuration. Deploy (Step ③), grant the app read access
 (Step ④), and run the gold job once (Step ⑤).
 
-**What each of the three does:**
+**What each value does:**
 
-| Value | What it is | Leave blank? |
+| Value | What it is | If left blank |
 |---|---|---|
-| `USE_LIVE` | `"true"` = real data, `"false"` = demo. | Leave `"false"` for demo. |
-| `DATABRICKS_WAREHOUSE_ID` | The serverless SQL warehouse the app queries with. Grant its service principal **CAN USE** (Step ④). | Required for live; blank in demo. |
-| `FINOPS_GOLD_SCHEMA` | Where the nightly `finops_gold_sync` job stores its pre-aggregated tables. The app reads these in ~1 s instead of scanning account-wide system tables on every page. **The job creates the schema + tables for you** — you just need `CREATE` on the catalog. | Required for live; ignored in demo. |
+| `DATABRICKS_WAREHOUSE_ID` | The serverless SQL warehouse the app queries with. Grant its service principal **CAN USE** (Step ④). | App stays on demo data + shows the setup banner. |
+| `FINOPS_GOLD_SCHEMA` | Where the nightly `finops_gold_sync` job stores its pre-aggregated tables. The app reads these in ~1 s instead of scanning account-wide system tables on every page. **The job creates the schema + tables for you** — you just need `CREATE` on the catalog. | App stays on demo data + shows the setup banner. |
+| `USE_LIVE` | Already `"true"` (ships live). Set to `"false"` only to **force demo on purpose** (no banner). | — |
 
 > [!IMPORTANT]
-> **Why gold is required for live.** The app reads `system.billing.usage`,
+> **Why a gold schema is needed for live.** The app reads `system.billing.usage`,
 > `system.query.history`, `system.lakeflow.*` — account-wide tables with tens of millions
 > of rows. Scanning those on every page load isn't viable, so a nightly job pre-aggregates
-> them once into the gold schema and the app reads that. The app **won't start in live mode
-> without `FINOPS_GOLD_SCHEMA` set**. (Read-only eval with no writable schema? Set
-> `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` to read straight off system tables — slow, not for
-> production.) After going live, run `finops_gold_sync` **once** (Step ⑤) or the estate
-> pages stay empty until the first nightly run.
+> them once into the gold schema and the app reads that. Until `FINOPS_GOLD_SCHEMA` (and a
+> warehouse) are set, the app **doesn't fail** — it falls back to demo with the setup
+> banner. (Read-only eval with no writable schema? Set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"`
+> to read straight off system tables — slow, not for production.) After configuring, run
+> `finops_gold_sync` **once** (Step ⑤) or the estate pages stay empty until the first
+> nightly run.
 
 ### Everything else is optional — leave it blank unless you want it
 
@@ -127,11 +125,11 @@ The common ones:
   all ship **on**. Set any to `"false"` to hide that surface (its API also goes inert — no
   half-rendered tabs, no model calls).
 - **Acknowledge/dismiss storage** — on by default. **You don't pick a storage type here —
-  the deploy target does** (see Step ③): the default `customer` target stores it in a tiny
-  Delta table in your gold schema (nothing to set — leave `FINOPS_WRITEBACK_SCHEMA` blank to
-  reuse the gold schema); the `customer-lakebase` target uses managed Postgres and wires
-  itself up. If the app can't write the state it reports writeback **off** and hides the
-  controls — it never silently drops a dismissal.
+  the deploy target does** (see Step ③): the recommended `-t customer` target uses a managed
+  Lakebase (Postgres) instance the bundle wires up for you (nothing to set); the
+  `-t customer-delta` fallback stores a tiny Delta table in your gold schema instead (leave
+  `FINOPS_WRITEBACK_SCHEMA` blank to reuse the gold schema). If the app can't write the state
+  it reports writeback **off** and hides the controls — it never silently drops a dismissal.
 - **Business-unit / team reporting** (`FINOPS_WORKSPACE_BU_TABLE`, `FINOPS_USER_TEAM_TABLE`)
   — blank hides those columns (Step ⑥ if you want them).
 
@@ -265,13 +263,14 @@ GRANT USE SCHEMA, SELECT ON SCHEMA system.lakeflow           TO `<app-sp>`;  -- 
 > grant is needed.
 
 > [!NOTE]
-> **Only if writeback stays on in live mode with the default Delta backend** — the app
-> persists its acknowledge/ignore state in a `finops_ack_status` table in your writeback
-> schema, so grant the **app's own** service principal `CREATE`/`MODIFY` on that schema:
+> **Only on the `-t customer-delta` fallback target** (the recommended `-t customer`
+> Lakebase target needs none of this — its writeback state lives in the bound Postgres).
+> On `customer-delta` the app persists acknowledge/ignore state in a `finops_ack_status`
+> table in your writeback schema, so grant the **app's own** service principal
+> `CREATE`/`MODIFY` on that schema:
 > `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<app-sp>\`;` (the writeback
-> schema is `FINOPS_GOLD_SCHEMA` or `FINOPS_WRITEBACK_SCHEMA` from step ②). Skip this on
-> `-t customer-lakebase` (state lives in the bound Postgres) or if you set
-> `FINOPS_FEATURE_WRITEBACK: "false"`.
+> schema is `FINOPS_GOLD_SCHEMA` or `FINOPS_WRITEBACK_SCHEMA` from step ②). Skip entirely
+> if you set `FINOPS_FEATURE_WRITEBACK: "false"`.
 
 > [!IMPORTANT]
 > All three need an **account / metastore + workspace admin** — the app's own SP is
@@ -417,7 +416,7 @@ deterministic text.
 Pull the latest code into the Git folder and re-run the deploy cell
 (`databricks bundle deploy -t customer` then `databricks bundle run estate -t customer`).
 Your settings live in `app.yaml`, outside the code, so an upgrade never disturbs them.
-Use the same target you originally deployed (`-t customer` or `-t customer-lakebase`).
+Use the same target you originally deployed (`-t customer` or `-t customer-delta`).
 
 > [!IMPORTANT]
 > **After an upgrade, re-run `finops_gold_sync` once.** The Overview, Jobs, Tables and
@@ -432,14 +431,13 @@ Use the same target you originally deployed (`-t customer` or `-t customer-lakeb
 
 > [!NOTE]
 > **Acknowledge / ignore** (dismissing an alert so it stops surfacing every refresh) is
-> **on by default**. On the default (Delta) backend it stores state in a small
-> `finops_ack_status` table in a **writeback schema**, so live mode needs a writeback
-> schema set (`FINOPS_GOLD_SCHEMA` **or** `FINOPS_WRITEBACK_SCHEMA`) plus
-> `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<app-service-principal>\`` — if
-> neither is set the app reports writeback off and hides the controls (no silent failure).
-> The optional `customer-lakebase` target (see Step ③) swaps that for a managed-Postgres
-> backend for lower latency at scale and needs none of the schema setup; everything else is
-> identical.
+> **on by default**. On the recommended **`-t customer` (Lakebase)** target its state lives
+> in the bound Postgres — **nothing to set**. On the **`-t customer-delta`** fallback it
+> instead stores a small `finops_ack_status` Delta table, so live mode there needs a
+> writeback schema (`FINOPS_GOLD_SCHEMA` **or** `FINOPS_WRITEBACK_SCHEMA`) plus
+> `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<app-service-principal>\``. Either
+> way, if the state can't persist the app reports writeback off and hides the controls
+> (never a silent loss).
 
 ---
 
@@ -448,8 +446,8 @@ Use the same target you originally deployed (`-t customer` or `-t customer-lakeb
 | Symptom | Fix |
 |---|---|
 | A tab shows a 503 / "read failed" | The warehouse is stopped, or a grant is missing — the message names the exact object. Re-run the grant from step ④. |
-| App won't start in live mode / logs say "LIVE MODE REQUIRES A GOLD SCHEMA" | Set `FINOPS_GOLD_SCHEMA` in `app.yaml` (step ②) and redeploy — it's required in live mode. For a read-only eval with no writable schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` instead (slow; not for production). |
-| Data still looks empty after `USE_LIVE: "true"` | Confirm `DATABRICKS_WAREHOUSE_ID` **and** `FINOPS_GOLD_SCHEMA` are set in `app.yaml`, that you re-ran the deploy cell, and that you **ran `finops_gold_sync` once** (step ⑤) — live pages serve from gold, which is empty until the first run. |
+| App shows demo data + a "finish setup to go live" banner | Live mode is on but the warehouse and/or gold schema aren't set yet, so the app fell back to demo (it never fails to start). Set `DATABRICKS_WAREHOUSE_ID` + `FINOPS_GOLD_SCHEMA` in `app.yaml` (step ②), redeploy, grant read access (step ④), and run `finops_gold_sync` once (step ⑤). For a read-only eval with no writable schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` (slow; not for production). |
+| Live mode on + configured, but pages are empty | Confirm `DATABRICKS_WAREHOUSE_ID` **and** `FINOPS_GOLD_SCHEMA` are set, that you re-ran the deploy cell, and that you **ran `finops_gold_sync` once** (step ⑤) — live pages serve from gold, which is empty until the first run. |
 | Governance / Access group panels show "run the daily job" | Unpause **estate-command-center-admin-sync** (step ⑤) and let it run once. |
 | **Acknowledge / Reopen buttons do nothing** (or the ack controls disappeared) after you **deleted + recreated** the app | A recreated app gets a **new service principal**, which cannot use the previous SP's writeback schema (Delta: "permission denied"; Lakebase: "permission denied for schema …"). The app now reports writeback **off** with the reason rather than failing silently. **Fix:** for the Lakebase backend set a **fresh** `FINOPS_LAKEBASE_SCHEMA` (e.g. `estate2`) so the new SP creates + owns its own schema, then redeploy; for the Delta backend re-run the `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<new-app-service-principal>\`` from step ④ with the new SP. |
 | Pages slow | Confirm the `finops_gold_sync` job actually ran (step ⑤); the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale or you enabled the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch. |
