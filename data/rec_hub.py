@@ -308,12 +308,25 @@ def estate_metrics() -> dict[str, Any]:
             "automated_pct": w["automated_pct"],
         }
 
-    # --- per-warehouse idle (derive from workspace idle + warehouse presence) -
-    # Model idle warehouses off the least-automated workspaces (highest idle %).
-    idle_warehouses = [
-        {"warehouse": w["workspace"], "idle_pct": w["idle_pct"], "spend_usd_month": w["spend_usd_month"]}
-        for w in workspaces if w["idle_pct"] >= 0.20
-    ]
+    # --- idle interactive/SQL headroom, per workspace -------------------------
+    # Auto-stop / right-size only recovers cost on INTERACTIVE + SQL-warehouse
+    # compute — NOT jobs/DLT/serverless/AI spend (those don't have an idle-warehouse
+    # lever). So the addressable base is all-purpose + SQL-classic + serverless-SQL,
+    # not the whole workspace spend. Applying the idle % to total workspace spend
+    # (as before) massively overstated the saving and mislabeled mixed spend as "an
+    # idle SQL warehouse". Carry the addressable base explicitly.
+    idle_warehouses = []
+    for w in workspaces:
+        if w["idle_pct"] < 0.20:
+            continue
+        m = ws_metrics.get(w["workspace"], {})
+        addressable = m.get("all_purpose_cost", 0) + m.get("sql_classic_cost", 0) + m.get("serverless_cost", 0)
+        if addressable <= 0:
+            continue
+        idle_warehouses.append({
+            "workspace": w["workspace"], "idle_pct": w["idle_pct"],
+            "addressable_usd_month": addressable, "spend_usd_month": w["spend_usd_month"],
+        })
 
     # --- external-table $ opportunity -----------------------------------------
     external_tables = [t for t in tables if t["table_type"] == "EXTERNAL"]
@@ -533,17 +546,20 @@ def _strategic_plays() -> list[dict[str, Any]]:
                                "quantify with an A/B run of representative jobs before migrating at scale.",
                  severity=1.2, frequency=1.1)
 
-    # --- CMP-002: auto-stop + right-size idle warehouses -----------------------
+    # --- CMP-002: auto-stop + right-size idle interactive/SQL compute ----------
+    # Savings apply to the ADDRESSABLE base (interactive + SQL-warehouse spend),
+    # not the whole workspace — auto-stop can't recover jobs/DLT/serverless/AI cost.
     for wh in m["idle_warehouses"]:
-        saving = wh["spend_usd_month"] * wh["idle_pct"] * 0.35
+        base = wh.get("addressable_usd_month", wh.get("spend_usd_month", 0))
+        saving = base * wh["idle_pct"] * 0.35
         if saving < 200:
             continue
-        emit("CMP-002", scope_label=wh["warehouse"], est_savings=saving,
+        emit("CMP-002", scope_label=wh.get("workspace", wh.get("warehouse", "")), est_savings=saving,
              evidence=[
-                 f"{round(wh['idle_pct'] * 100)}% idle",
-                 f"${wh['spend_usd_month']:,}/mo spend",
+                 f"{round(wh['idle_pct'] * 100)}% idle (SQL query activity)",
+                 f"${round(base):,}/mo interactive + SQL spend",
              ],
-             savings_basis=f"${wh['spend_usd_month']:,}/mo x {round(wh['idle_pct'] * 100)}% idle x 35% recoverable via auto-stop / right-size",
+             savings_basis=f"${round(base):,}/mo interactive+SQL x {round(wh['idle_pct'] * 100)}% idle x 35% recoverable via auto-stop / right-size",
              severity=1.1, frequency=1.3)
 
     # --- CMP-004: pools + spot for heavy classic clusters ----------------------

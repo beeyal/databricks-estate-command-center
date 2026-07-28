@@ -100,7 +100,11 @@ export function CostAttributionPanel({ attribution, workspace }: { attribution: 
           <div className="flex flex-wrap gap-2">
             {spikes.map((s) => (
               <span key={s.driver} className="pill tabular-nums bg-warning/15 text-warning">
-                {s.label} +{fmtPct(s.mom_pct)} MoM · +{fmtMoney(s.delta_usd, cur, { compact: true })}
+                {/* mom_pct is null for a NEW driver ($0 → spend) — label it "new"
+                    instead of "+—% MoM" (fmtPct returns a dash for null). */}
+                {s.label}{" "}
+                {s.is_new || s.mom_pct == null ? "new this month" : `+${fmtPct(s.mom_pct)} MoM`}
+                {" · +"}{fmtMoney(s.delta_usd, cur, { compact: true })}
               </span>
             ))}
           </div>

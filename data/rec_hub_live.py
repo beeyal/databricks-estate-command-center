@@ -359,10 +359,22 @@ class LiveProvider:
                 "spikes": [],                   # per-workspace MoM not computed live
                 "bu_of_ws": bu_of_ws,
                 "ws_by_name": ws_by_name,
-                # idle-warehouse play fires on workspaces with material estimated idle
+                # idle play fires on workspaces with material estimated idle. The
+                # addressable base is interactive + SQL spend only (auto-stop can't
+                # recover jobs/DLT/serverless/AI) — NOT total workspace spend, which
+                # overstated the saving and mislabeled mixed spend as one idle SQL
+                # warehouse. Carry the addressable base from ws_metrics.
                 "idle_warehouses": [
-                    {"warehouse": w["workspace"], "idle_pct": w.get("idle_pct", 0.0),
-                     "spend_usd_month": w["spend_usd_month"]}
-                    for w in workspaces if w.get("idle_pct", 0.0) >= 0.20],
+                    {"workspace": w["workspace"], "idle_pct": w.get("idle_pct", 0.0),
+                     "spend_usd_month": w["spend_usd_month"],
+                     "addressable_usd_month": (
+                         ws_metrics.get(w["workspace"], {}).get("all_purpose_cost", 0)
+                         + ws_metrics.get(w["workspace"], {}).get("sql_classic_cost", 0)
+                         + ws_metrics.get(w["workspace"], {}).get("serverless_cost", 0))}
+                    for w in workspaces
+                    if w.get("idle_pct", 0.0) >= 0.20
+                    and (ws_metrics.get(w["workspace"], {}).get("all_purpose_cost", 0)
+                         + ws_metrics.get(w["workspace"], {}).get("sql_classic_cost", 0)
+                         + ws_metrics.get(w["workspace"], {}).get("serverless_cost", 0)) > 0],
             }
         return self._memo("estate", build)

@@ -188,7 +188,7 @@ recommendations:
 
   - id: CMP-002
     category: compute
-    title: "Set aggressive auto-stop and right-size an idle / oversized SQL warehouse"
+    title: "Cut idle interactive & SQL-warehouse spend with auto-stop + right-sizing"
     trigger: "warehouse_idle_hours_per_day > 4 OR warehouse_auto_stop_minutes > 30 OR (warehouse_p95_queue_depth = 0 AND warehouse_utilisation < 0.3)"
     what_to_do:
       - "Set auto-stop to the recommended 10 min (min 5 via UI, 1 via API) so the warehouse stops when idle."
@@ -197,13 +197,13 @@ recommendations:
     features:
       - name: "Serverless SQL Compute (serverless SQL warehouses)"
         in_geo_status: GA
-    expected_impact: "Aggressive auto-stop + right-size are the doc-recommended levers to cut idle SQL spend. Savings = idle_hours/day × 30 × warehouse_$_per_hour + oversize_delta (heuristic; formula uses observed idle + list price)."
+    expected_impact: "Aggressive auto-stop + right-size are the doc-recommended levers to cut idle interactive/SQL spend. Savings = addressable (interactive + SQL-warehouse) spend × estimated idle fraction × ~35% recoverable (heuristic). Excludes jobs/DLT/serverless/AI spend, which auto-stop can't recover."
     effort: Low
     priority_default: P1
     scope: workspace
     suggested_owner: "Workspace admin"
     source: "https://docs.databricks.com/aws/en/compute/sql-warehouse/warehouse-behavior ; https://learn.microsoft.com/en-us/azure/databricks/lakehouse-architecture/cost-optimization/best-practices"
-    notes: "Highest-frequency, lowest-effort win. Fires per-warehouse."
+    notes: "Highest-frequency, lowest-effort win. Fires per workspace on estimated idle interactive/SQL headroom."
 
   - id: CMP-003
     category: compute

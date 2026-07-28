@@ -868,7 +868,10 @@ export interface Spike {
 export interface DriverSpike {
   driver: string;
   label: string;
-  mom_pct: number;
+  /** null for a NEW driver (prev $0 = infinite growth). */
+  mom_pct: number | null;
+  /** True when this driver had $0 last month and spend this month. */
+  is_new?: boolean;
   prev_usd_month: number;
   spend_usd_month: number;
   delta_usd: number;
