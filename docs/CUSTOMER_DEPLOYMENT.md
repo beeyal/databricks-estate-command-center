@@ -191,8 +191,8 @@ to the Databricks logo) → **Databricks Apps** → click **estate-command-cente
 Name column. On the app's **Overview** / **Authorization** tab you'll see its **service
 principal** — a client ID like `a1b2c3d4-…`. Copy it.
 
-There are two things to grant. One is set in the workspace UI (it is **not** a SQL
-statement), and the rest are SQL.
+There are two required grants: **(a)** let the app use the warehouse (done in the workspace
+UI — it is **not** a SQL statement), and **(b)** read access to the system tables (SQL).
 
 **a. Let the app use the warehouse (UI, not SQL).** A SQL warehouse cannot be granted in
 the SQL editor. In the left nav open **SQL Warehouses**, click your warehouse, click the

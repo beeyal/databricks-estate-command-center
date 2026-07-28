@@ -31,11 +31,11 @@
 
 | 🚀 **[Customer deployment guide →](docs/CUSTOMER_DEPLOYMENT.md)** | 🛠 **[Internal field guide →](docs/FIELD_GUIDE.md)** |
 |---|---|
-| Deploying **live in a customer's workspace**. A clean, six-step, live-only guide written for a first-time Databricks Apps user. No demo/field jargon. | For the **Databricks field**. The foolproof 3-step **demo deploy** and feature-flag variants for showcasing. |
+| **Deploying it into a workspace.** A clean, six-step guide for a first-time Databricks Apps user — set two values, deploy, grant read access. The one place deployment lives. | For the **Databricks field**: a quick demo deploy for showcasing. |
 
 </div>
 
-*The README itself is the full product reference — every page, the architecture, the data model, feature flags, and the deploy-detail appendix that both guides draw on.*
+*The README below is the product reference — what every page does, the architecture, the data model, and feature flags. For **how to deploy**, use the [Customer deployment guide](docs/CUSTOMER_DEPLOYMENT.md).*
 
 ---
 
