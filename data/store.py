@@ -711,9 +711,17 @@ if __name__ == "__main__":
     # operational(): demo is always operational when the flag is on; feature-off
     # is not operational. (Live+delta+no-schema is exercised via app config, not
     # here, since it depends on env — this covers the pure-logic branches.)
+    # NB: pin USE_LIVE=false explicitly — the shipped default is now live, and this
+    # assertion is specifically the DEMO-mode branch (demo → backend='demo' → ok).
     import os as _os
     _os.environ["FINOPS_FEATURE_WRITEBACK"] = "true"
-    config.get_features.cache_clear() if hasattr(config.get_features, "cache_clear") else None
+    _os.environ["USE_LIVE"] = "false"
+    config.reset_cache()
     ok, reason = operational()
     assert ok and reason == "", (ok, reason)  # demo mode (use_live false) → ok
+    # And feature-off → not operational, with a clear reason.
+    _os.environ["FINOPS_FEATURE_WRITEBACK"] = "false"
+    config.reset_cache()
+    ok2, reason2 = operational()
+    assert not ok2 and reason2, (ok2, reason2)
     print("self-check OK")

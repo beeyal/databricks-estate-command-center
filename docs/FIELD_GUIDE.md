@@ -139,7 +139,7 @@ hand-editing `app.yaml`. **`customise.yaml`** is the single per-customer file;
 ```
 
 The `--no-*` switches just write the same `FINOPS_FEATURE_*` values into `app.yaml`. See
-the [Deployment guide](DEPLOYMENT.md) for the full `customise.yaml` field list and the
+the [Deployment guide](CUSTOMER_DEPLOYMENT.md) for the full `customise.yaml` field list and the
 config-precedence rules.
 
 ---

@@ -7,7 +7,7 @@
 > required. **Lakebase is an optional, bundle-native backend** for that writeback
 > (deploy `-t customer-lakebase`; the bundle creates + binds a CU_1 instance),
 > not a mandatory layer. See the "DECISIONS SINCE THIS DOC WAS DRAFTED" box below
-> and **README.md** / **docs/DEPLOYMENT.md** for current behaviour.
+> and **README.md** / **docs/CUSTOMER_DEPLOYMENT.md** for current behaviour.
 
 ## TL;DR
 

@@ -144,7 +144,7 @@ One config source, one precedence rule: **environment variable > `config.yaml` >
 - **`/api/genie/ask` returns 404 (and makes no Genie call)** when `features.genie` is false, **`/api/dqm` returns 404** when `features.dqm` is false, and **`/api/acks` returns 404** when `features.writeback` is false — hidden features are genuinely inert server-side, never merely unrendered (no stray Genie/model calls when disabled);
 - exposes the resolved flags and `fx_rate` on **`/api/config`** for the SPA to gate its own rendering.
 
-Any combination of the flags is valid; `deploy.sh --no-genie` / `--no-narration` / `--no-ai` / `--no-dqm`, the `features:` block in `customise.yaml`, or setting `FINOPS_FEATURE_*` to `"false"` in `app.yaml` all set them. The **deterministic recommender, cost-attribution, and Genie-cost attribution are always on** — they call no model, so they are not gated as "AI features". Full detail in [`DEPLOYMENT.md`](DEPLOYMENT.md).
+Any combination of the flags is valid; setting `FINOPS_FEATURE_*` to `"false"` in `app.yaml` ships any subset off. The **deterministic recommender, cost-attribution, and Genie-cost attribution are always on** — they call no model, so they are not gated as "AI features". Full detail in [`CUSTOMER_DEPLOYMENT.md`](CUSTOMER_DEPLOYMENT.md).
 
 ### 6 · Ask Genie — SSE streaming flow (`features.genie`)
 
@@ -200,7 +200,7 @@ The `usage_metadata.genie.surface` field is treated as an **open enum** — the 
 
 Live mode serves from nightly precomputed **gold Delta tables** — the layer that turns a multi-second system-table scan into a sub-second read. The scheduled `finops_gold_sync` job (`data/gold.py`) precomputes every estate payload — plus a per-table size census (metadata-only: it iterates `information_schema.tables` → `DESCRIBE DETAIL`, no data scan) — into `<gold_schema>.finops_gold` and `<gold_schema>.finops_gold_table_sizes`. The app then serves each estate page as a keyed lookup against those tables via a small serverless SQL warehouse (scale-to-zero), with **no per-request system-table scan**.
 
-- **Config:** `gold_schema` (env `FINOPS_GOLD_SCHEMA`), e.g. `main.finops_gold`. **Required in live mode** — the app refuses to boot with `USE_LIVE=true` and no gold schema; ignored in demo. Read-only-eval escape hatch: `FINOPS_ALLOW_LIVE_NO_GOLD=true` (computes each read live; slow, not for prod). No extra Python deps (just `databricks-sdk`).
+- **Config:** `gold_schema` (env `FINOPS_GOLD_SCHEMA`), e.g. `main.finops_gold`. **Required in live mode** — with `USE_LIVE=true` and no gold schema (or no warehouse) the app **falls back to demo mode with a "finish setup to go live" banner** rather than failing to boot; ignored in demo. Read-only-eval escape hatch: `FINOPS_ALLOW_LIVE_NO_GOLD=true` (computes each read live; slow, not for prod). No extra Python deps (just `databricks-sdk`).
 - **Grant:** the `finops_gold_sync` job's service principal needs read on the system tables the app reads, plus `CREATE`/`MODIFY` on `<gold_schema>`.
 
 ## Scheduled jobs (`finops_gold_sync` + `finops_admin_sync`)
