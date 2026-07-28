@@ -125,8 +125,9 @@ The common ones:
 
 - **`FINOPS_CUSTOMER_NAME`** — the label in the app header. Change to your company (cosmetic).
 - **Feature toggles** (`FINOPS_FEATURE_GENIE` / `_AI_NARRATION` / `_DQM` / `_WRITEBACK`) —
-  all ship **on**. Set any to `"false"` to hide that surface (its API also goes inert — no
-  half-rendered tabs, no model calls).
+  all ship **on**. Set any to `"false"` to switch that surface off — it's hidden in the UI
+  **and** its API goes inert (no half-rendered tabs, and no model call is ever made). See the
+  table just below for exactly what each one removes.
 - **Acknowledge/dismiss storage** — on by default. **You don't pick a storage type here —
   the deploy target does** (see Step ③): the recommended `-t customer` target uses a managed
   Lakebase (Postgres) instance the bundle wires up for you (nothing to set); the
@@ -135,6 +136,21 @@ The common ones:
   it reports writeback **off** and hides the controls — it never silently drops a dismissal.
 - **Business-unit / team reporting** (`FINOPS_WORKSPACE_BU_TABLE`, `FINOPS_USER_TEAM_TABLE`)
   — blank hides those columns (Step ⑥ if you want them).
+
+#### What each `"false"` turns off (and what stays)
+
+| Set to `"false"` | You lose | You keep |
+|---|---|---|
+| **`FINOPS_FEATURE_GENIE`** | The **Ask Genie** banner (natural-language Q&A). `/api/genie/ask` goes inert. | Everything else — including the **Genie $** tab (that's Genie *cost attribution* from billing, not the Q&A feature, so it stays). |
+| **`FINOPS_FEATURE_AI_NARRATION`** | The **LLM-written wording** on recommendations, and the Query Advisor's **AI SQL-rewrite** suggestion. | **All recommendations still appear**, with clear rule-based explanations + next steps — just not LLM-phrased. Query Advisor still finds & ranks the queries. |
+| **Both of the above** *(a "no-AI" deploy)* | Only the two rows above. **No LLM endpoint is needed at all** — nothing ever calls a model, so no data-residency/endpoint setup. | A **fully-featured cost & governance console**: every tab, all cost/usage/access/governance data, and the full priority-ranked recommendation engine. |
+| **`FINOPS_FEATURE_DQM`** | The **Data Quality** tab (Lakehouse Monitoring). `/api/dqm` goes inert. | All 13 other tabs. *(Turn this off if you don't use Lakehouse Monitoring — then you can skip its grant in Step ④.)* |
+| **`FINOPS_FEATURE_WRITEBACK`** | The **acknowledge / dismiss** controls on alerts (so you can't snooze a known-OK finding). | Everything is otherwise identical — the app is simply strictly read-only. |
+
+> [!NOTE]
+> **FYI** — the deterministic recommender, cost attribution, and Genie-cost view are **always
+> on** regardless of these flags; they call no model. Turning flags off never fabricates or
+> hides *data*, it only removes the optional surface itself.
 
 > [!WARNING]
 > `app.yaml`'s `env:` is a YAML **list**. Edit only the text inside the quotes on a
