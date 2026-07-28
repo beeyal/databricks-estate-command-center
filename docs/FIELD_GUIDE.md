@@ -4,6 +4,11 @@
 
 **Stand up a demo in your own FEVM/workspace, then onboard a customer.**
 
+> **⚠️ Config is now ONE file: `app.yaml`.** `config.yaml`, `customise.yaml`, and
+> `deploy.sh` have been removed. Wherever this guide mentions them, the current
+> equivalent is an env var in **`app.yaml`** deployed with `databricks bundle deploy`.
+> Demo deploy is just `bundle deploy -t dev` (app.yaml ships in demo mode).
+
 *Asset-bundle deploy · nothing compiles · demo mode is the default*
 
 </div>

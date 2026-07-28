@@ -13,8 +13,6 @@ frontend/node_modules/
 .claude/
 docs/
 *.md
-deploy.sh
-customise*.yaml
 .gitignore
 SPEC.md
 SUBMISSION_TODO.md

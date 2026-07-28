@@ -13,7 +13,7 @@
 
 [**🏗 Architecture**](docs/ARCHITECTURE.md) ·
 [**🔒 Security**](docs/SECURITY.md) ·
-[**🚀 Deployment guide**](docs/DEPLOYMENT.md) ·
+[**🚀 Deployment guide**](docs/CUSTOMER_DEPLOYMENT.md) ·
 [**📋 Build spec**](SPEC.md) ·
 [**✅ Submission checklist**](SUBMISSION_TODO.md)
 
@@ -31,7 +31,7 @@
 
 | 🚀 **[Customer deployment guide →](docs/CUSTOMER_DEPLOYMENT.md)** | 🛠 **[Internal field guide →](docs/FIELD_GUIDE.md)** |
 |---|---|
-| Deploying **live in a customer's workspace**. A clean, six-step, live-only guide written for a first-time Databricks Apps user. No demo/field jargon. | For the **Databricks field**. The foolproof 3-step **demo deploy**, feature-flag variants, and the field tooling (`deploy.sh`, `customise.yaml`) for showcasing and onboarding. |
+| Deploying **live in a customer's workspace**. A clean, six-step, live-only guide written for a first-time Databricks Apps user. No demo/field jargon. | For the **Databricks field**. The foolproof 3-step **demo deploy** and feature-flag variants for showcasing. |
 
 </div>
 
@@ -47,7 +47,7 @@
 
 </div>
 
-> **New since first release:** a **Data Quality** tab (Lakehouse Monitoring inventory + cost tie-in), an **Ask Genie** streaming Q&A banner, **Genie cost attribution** (Genie Code vs Genie Spaces), **deploy-time feature flags** with **4 deploy variants**, **dual currency** (USD/AUD), and **cost-by-driver cost-by-driver / spike-detection** views. See the [Deployment guide](docs/DEPLOYMENT.md) for the flag matrix and grants.
+> **New since first release:** a **Data Quality** tab (Lakehouse Monitoring inventory + cost tie-in), an **Ask Genie** streaming Q&A banner, **Genie cost attribution** (Genie Code vs Genie Spaces), **deploy-time feature flags** with **4 deploy variants**, **dual currency** (USD/AUD), and **cost-by-driver cost-by-driver / spike-detection** views. See the [Deployment guide](docs/CUSTOMER_DEPLOYMENT.md) for the flag matrix and grants.
 
 ---
 
@@ -310,15 +310,15 @@ priority_score = normalise($/mo × severity) ÷ effort_weight × risk_multiplier
 
 ### Genie spend & currency
 
-The Genie **paid** split pro-rates each user's billable DBUs across surfaces *after* the shared 150-free-DBU-per-user allowance — see [Genie cost attribution](#genie-cost-attribution) for the full caveats (only the per-user total is exact; the per-surface paid `$` is an estimate). The **AUD** toggle restates every figure as `USD list price × fx_rate` (`config.yaml`, default `1.52`), labelled indicative.
+The Genie **paid** split pro-rates each user's billable DBUs across surfaces *after* the shared 150-free-DBU-per-user allowance — see [Genie cost attribution](#genie-cost-attribution) for the full caveats (only the per-user total is exact; the per-surface paid `$` is an estimate). The **AUD** toggle restates every figure as `USD list price × fx_rate` (`app.yaml`, default `1.52`), labelled indicative.
 
 ---
 
 ## Feature flags & deploy variants
 
-The app reads a single config source — `config.yaml`, with every value overridable by the matching `app.yaml` / App-UI environment variable (env wins) — and surfaces it via **`/api/config`**. The frontend fetches `/api/config` once and **conditionally renders**: the [Ask Genie](#ask-genie) banner only if `genie`, the [Data Quality](#data-quality) tab only if `dqm`, and LLM rec narration only if `ai_narration`. Anything hidden is also **inert server-side** — its endpoints and any Genie/model calls are absent, not merely unrendered.
+The app reads a single config source — the environment variables in **`app.yaml`** (or the App UI → Settings → Environment) — and surfaces it via **`/api/config`**. The frontend fetches `/api/config` once and **conditionally renders**: the [Ask Genie](#ask-genie) banner only if `genie`, the [Data Quality](#data-quality) tab only if `dqm`, and LLM rec narration only if `ai_narration`. Anything hidden is also **inert server-side** — its endpoints and any Genie/model calls are absent, not merely unrendered.
 
-| Flag | Built-in default | Shipped `config.yaml` | Gates | Notes |
+| Flag | Built-in default | Shipped `app.yaml` | Gates | Notes |
 |---|---|---|---|---|
 | `features.genie` | `true` | `true` | Ask Genie banner + `/api/genie/ask` SSE | Genie Conversation API over the auto-provisioned/`genie_space_id` Space. |
 | `features.ai_narration` | **`false`** | `true` | AI SQL-rewrite panel (+ optional LLM rec rationale) | **Off by default** (no model calls / no surprise spend) — the shipped demo config turns it on to showcase the EXPLAIN-validated rewrite. Falls back to deterministic text if no endpoint. |
@@ -327,7 +327,7 @@ The app reads a single config source — `config.yaml`, with every value overrid
 
 > The **deterministic recommender**, **cost-attribution**, and **[Genie cost attribution](#genie-cost-attribution)** are **always on** regardless of these flags — they call no model, so they are not "AI features".
 
-**Composable deploy variants** — the capabilities toggle independently, so any subset can be on. This repo's `config.yaml` ships the three AI/observability flags on (to showcase everything); the safe built-in default is genie + dqm on, ai_narration off. `writeback` is a separate, AI-independent flag and is on by default in every variant. A few common combinations:
+**Composable deploy variants** — the capabilities toggle independently, so any subset can be on. This repo's `app.yaml` ships the three AI/observability flags on (to showcase everything); the safe built-in default is genie + dqm on, ai_narration off. `writeback` is a separate, AI-independent flag and is on by default in every variant. A few common combinations:
 
 | Variant | `genie` | `ai_narration` | `dqm` | Tabs | For |
 |---|:--:|:--:|:--:|:--:|---|
@@ -338,7 +338,7 @@ The app reads a single config source — `config.yaml`, with every value overrid
 
 **Only `dqm` changes the tab count** — it gates the Data Quality tab. `genie` gates the Ask Genie banner (not a tab) and `ai_narration` gates only the LLM rec narration (no tab), so both leave the count unchanged.
 
-`deploy.sh` provides four independent, composable switches — `--no-genie` (Ask Genie off), `--no-narration` (LLM rec-narration off), `--no-ai` (both Genie + narration off — a shortcut), and `--no-dqm` (Data Quality tab off) — usable in any combination, no code edits to onboard a customer. The same is settable declaratively via the `features:` block in `customise.yaml`. See the **[Deployment guide](docs/DEPLOYMENT.md)** for the full flag matrix, per-customer `customise.yaml`, the exact grants per variant, and the one-command bundle deploy.
+Each capability is a single env var in `app.yaml` — set `FINOPS_FEATURE_GENIE`, `FINOPS_FEATURE_AI_NARRATION`, or `FINOPS_FEATURE_DQM` to `"false"` to ship that surface off, in any combination, with no code edits. See the **[Deployment guide](docs/CUSTOMER_DEPLOYMENT.md)** for the full flag matrix, the exact grants per variant, and the one-command bundle deploy.
 
 The screenshot below is the **"neither" variant** — 13 tabs (no Data Quality), no Ask Genie banner — contrast it with the [Data Quality shot](#data-quality) above (the "AI + DQM" variant, showing DQM, Ask Genie, Genie spend and the USD/AUD toggle in one frame):
 
@@ -350,7 +350,7 @@ The screenshot below is the **"neither" variant** — 13 tabs (no Data Quality),
 
 Folded in from the **cost-by-driver reference dashboard** — they validate the AU-East SKU framing (SKUs literally end in `_AUSTRALIA_EAST`):
 
-- **Dual currency (USD/AUD).** A header toggle restates every `$` figure across the estate: AUD = list-price USD × `fx_rate` (`config.yaml`, default `1.52`), clearly labelled indicative. USD is the default.
+- **Dual currency (USD/AUD).** A header toggle restates every `$` figure across the estate: AUD = list-price USD × `fx_rate` (`app.yaml`, default `1.52`), clearly labelled indicative. USD is the default.
 - **Cost by cost-driver (product).** A bar of total cost per `billing_origin_product` (SQL, Jobs, Interactive, DLT/Lakeflow, All-Purpose, Model Serving, AI Gateway, Predictive Optimization, Vector Search, Apps, Lakebase, Data Quality Monitoring). → Overview + Workspaces drill-down.
 - **Monthly trend — top-5 drivers.** A multi-line trend of the five biggest drivers over the last 6 months. → Overview + Workspaces.
 - **MoM spike detection.** A **driver-change-vs-prior-30-days (%)** bar; drivers up **≥ 25% MoM** fire a **cost-spike recommendation** (*investigate + attribute*) in the [Recommendations](#recommendations) hub. → Overview + Workspaces + recommendation catalogue trigger.
@@ -382,7 +382,7 @@ flowchart LR
   end
 
   subgraph API["FastAPI · app.py"]
-    CFG[config.yaml + env<br/>feature flags → /api/config]
+    CFG[app.yaml env<br/>feature flags → /api/config]
     EP["/api/* endpoints"]
     DEMO[data/generate_demo.py<br/>seeded Acme demo]
     REC[data/recommender.py<br/>deterministic rules]
@@ -428,8 +428,8 @@ flowchart TB
 ## Tech stack
 
 - **Frontend:** React 18 · Vite · TypeScript · Tailwind (`darkMode: "class"`, CSS-var theming) · Zustand (state) · Recharts (charts) · react-markdown · DM Sans. GitHub-dark surface with a Databricks-red accent.
-- **Backend:** FastAPI (`app.py`) serving `/api/*` and mounting the built SPA from `frontend/dist` via `StaticFiles`. Deterministic recommender (`data/recommender.py`) + catalogue-driven hub (`data/rec_hub.py`). A `config.yaml` + env feature-flag layer surfaced via `/api/config`; SSE streaming for [Ask Genie](#ask-genie) (`/api/genie/ask`); a Lakehouse-Monitoring [Data Quality](#data-quality) endpoint (`/api/dqm`, flag-gated).
-- **Deploy:** Databricks App — deployed as an **Asset Bundle** (`databricks.yml`) with `databricks bundle deploy -t customer` — **no Python, no npm** (the built `frontend/dist` is committed). `app.yaml` (run config) · `deploy.sh` (optional convenience wrapper) · `requirements.txt`.
+- **Backend:** FastAPI (`app.py`) serving `/api/*` and mounting the built SPA from `frontend/dist` via `StaticFiles`. Deterministic recommender (`data/recommender.py`) + catalogue-driven hub (`data/rec_hub.py`). An `app.yaml` env feature-flag layer surfaced via `/api/config`; SSE streaming for [Ask Genie](#ask-genie) (`/api/genie/ask`); a Lakehouse-Monitoring [Data Quality](#data-quality) endpoint (`/api/dqm`, flag-gated).
+- **Deploy:** Databricks App — deployed as an **Asset Bundle** (`databricks.yml`) with `databricks bundle deploy -t customer` — **no Python, no npm** (the built `frontend/dist` is committed). `app.yaml` (the single run-config file) · `requirements.txt`.
 - **Data:** `data/generate_demo.py` (seeded Acme-shaped demo, default) or live system tables via the Databricks SDK Statement Execution API (`USE_LIVE=true`, in `data/live.py`), with the exact SQL in `data/queries.sql`. Live mode serves from nightly precomputed **gold Delta tables** (`data/gold.py` → `<gold_schema>.finops_gold`).
 
 ---
@@ -457,7 +457,7 @@ Demo mode (`USE_LIVE=false`, the default) needs **nothing** — no warehouse, no
 
 The **Access** grant graph (principals · grants · risks) and drill-downs read live from `system.information_schema.*_privileges`. Group membership, workspace assignments, entitlements and PAT inventory come from the account **SCIM / Groups** + **workspace-assignments** + **token-management** REST APIs — not SQL — so they're pulled by the daily **`finops_admin_sync`** job into the Delta **`<ingest_schema>.finops_admin` table** and the app reads them from there (with a "Last refreshed" time). See `docs/ARCHITECTURE.md`.
 
-The last three rows are **only** needed for the corresponding feature flag: DQM reads need the monitor metadata + the `DATA_QUALITY_MONITORING` billing line; Ask Genie needs the app SP to be able to **create / list Genie Spaces** (for auto-provision + title discovery) and `CAN RUN` on the Space, plus `SELECT` on the 9 curated system tables the Space queries (a subset of what the app already reads). All reads are read-only. The [Deployment guide](docs/DEPLOYMENT.md) lists the exact grants per deploy variant.
+The last three rows are **only** needed for the corresponding feature flag: DQM reads need the monitor metadata + the `DATA_QUALITY_MONITORING` billing line; Ask Genie needs the app SP to be able to **create / list Genie Spaces** (for auto-provision + title discovery) and `CAN RUN` on the Space, plus `SELECT` on the 9 curated system tables the Space queries (a subset of what the app already reads). All reads are read-only. The [Deployment guide](docs/CUSTOMER_DEPLOYMENT.md) lists the exact grants per deploy variant.
 
 **Grant statement (minimum):**
 
@@ -570,7 +570,6 @@ databricks bundle run   estate -t customer -p my-workspace
 
 The `customer` target is portable — it no longer hardcodes a host, so it deploys to whatever workspace the `-p` profile points at. Then run the grants ([Reference — grants](#reference--grants-live-mode-only)) and unpause the daily job as above.
 
-> `./deploy.sh` exists as a convenience wrapper (it reads a `customise.yaml`, writes the matching env into `app.yaml`, and runs the bundle for you), but it **needs Python** — so the plain `databricks bundle` commands above are the recommended path.
 
 ### Reference — prerequisites
 
@@ -586,7 +585,7 @@ The `customer` target is portable — it no longer hardcodes a host, so it deplo
 
 ### Reference — the full config surface
 
-For the recommended workspace / bundle deploy, config is the **env vars in `app.yaml`** (see [Step 2 — Set your configuration](#step-2--set-your-configuration)); that's all you edit. The table below is the *complete* set of settings for reference — each `app.yaml` env var maps to one of these keys. If you use the `deploy.sh` wrapper (CLI path), you can instead supply them declaratively in a `customise.yaml`, which the wrapper turns into the same `app.yaml` env. Every field is optional and falls back to a safe default; precedence is **env var → `config.yaml` → built-in default**.
+For the recommended workspace / bundle deploy, config is the **env vars in `app.yaml`** (see [Step 2 — Set your configuration](#step-2--set-your-configuration)); that's all you edit. The table below is the *complete* set of settings for reference — each `app.yaml` env var maps to one of these keys. Every field is optional and falls back to a safe default; precedence is **env var → built-in default**.
 
 ```yaml
 customer_name: "Contoso Energy"      # shown in the header
@@ -637,14 +636,13 @@ FINOPS_FEATURE_WRITEBACK: "false"      # acknowledge/ignore off (strictly read-o
 
 No Python and no code edits — the flags are independent, so any combination can be turned off.
 
-**If you use the `deploy.sh` wrapper instead** (the CLI path, needs Python), the same result comes from CLI switches or the `features:` block in a `customise.yaml`:
+Each flag is one env var in `app.yaml` — set to `"false"` to ship that surface off:
 
-```bash
-./deploy.sh --profile <P> --no-genie                                # genie=false (Ask Genie off)
-./deploy.sh --profile <P> --no-narration                            # ai_narration=false (LLM rec-narration off)
-./deploy.sh --profile <P> --no-ai                                   # genie=false + ai_narration=false (shortcut)
-./deploy.sh --profile <P> --no-dqm                                  # dqm=false (no Data Quality tab)
-./deploy.sh --profile <P> --no-narration --no-dqm                   # any subset — the switches are independent & composable
+```yaml
+FINOPS_FEATURE_GENIE:         "false"   # Ask Genie off
+FINOPS_FEATURE_AI_NARRATION:  "false"   # LLM rec-narration off (rule text still shown)
+FINOPS_FEATURE_DQM:           "false"   # no Data Quality tab
+FINOPS_FEATURE_WRITEBACK:     "false"   # no acknowledge/dismiss controls (read-only)
 ```
 
 These `--no-*` switches just write the same `FINOPS_FEATURE_*` values into `app.yaml`.
@@ -693,7 +691,7 @@ system tables don't expose (budgets, budget policies, cluster-policy coverage, P
 alerts, SCIM groups, workspace assignments, DQM monitor configs) is **ingested by the
 `finops_admin_sync` job** ([Reference — the scheduled jobs](#reference--the-two-scheduled-jobs)) into the Delta `<ingest_schema>.finops_admin` table — the app reads those
 read-only, so its own SP does **not** need admin API access; the *job's* SP does. Full per-variant
-grant matrix → [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+grant matrix → [`docs/CUSTOMER_DEPLOYMENT.md`](docs/CUSTOMER_DEPLOYMENT.md).
 
 ### Reference — the two scheduled jobs
 
@@ -722,7 +720,7 @@ read-only system-table grants:
 - CREATE/MODIFY on <ingest_schema> to write the finops_admin Delta table.
 ```
 
-Enable it: set `FINOPS_INGEST_SCHEMA` in `app.yaml` (or the matching key in `customise.yaml`
+Enable it: set `FINOPS_INGEST_SCHEMA` in `app.yaml` (
 on the CLI-wrapper path), grant the SP as above, then **unpause** the job. Daily is the default
 cadence; the app always falls back gracefully (on-demand scans / "run the job" prompts) when the
 gold/admin tables are absent.
@@ -746,7 +744,7 @@ Both are non-fatal: a provisioning gap degrades the AI feature gracefully, never
 
 The **Data Quality** tab is a Lakehouse-Monitoring inventory with a FinOps cost tie-in ("which monitors am I paying for, and are they earning their keep?"). It's fully **deploy-time optional**:
 
-- **Turn it on/off:** set `FINOPS_FEATURE_DQM` to `"true"`/`"false"` in `app.yaml` (or `features.dqm` in a `customise.yaml` / `--no-dqm` on the CLI-wrapper path). When off, the tab **and** `/api/dqm` are absent — inert server-side, not just hidden — so a customer who doesn't use Lakehouse Monitoring never sees it.
+- **Turn it on/off:** set `FINOPS_FEATURE_DQM` to `"true"`/`"false"` in `app.yaml`. When off, the tab **and** `/api/dqm` are absent — inert server-side, not just hidden — so a customer who doesn't use Lakehouse Monitoring never sees it.
 - **What it reads (live mode):** quality/freshness results from **`system.data_quality_monitoring.table_results`**, joined to the **`DATA_QUALITY_MONITORING`** line in `system.billing.usage` for the cost tie-in. Monitor *configs* (type, schedule) come from the `finops_admin_sync` ingest (`GET /api/2.1/unity-catalog/tables/{full_name}/monitor`, which `information_schema` doesn't fully expose).
 - **Extra grants (only when `dqm: true` + live):** the app SP needs `SELECT` on `system.data_quality_monitoring` (used only by the Data Quality tab; the tab degrades gracefully to a calm info state if it's not granted).
 - **What the customer sees:** monitor inventory (type, quality, drift PSI/KS, null %, anomalies, freshness vs cadence, alerts), the **`DATA_QUALITY_MONITORING` cost by workspace**, and a **"prune monitors on low-value tables"** panel — stale/quiet monitors surfacing nothing actionable, with the `$/mo` reclaimed by pausing them.
@@ -850,7 +848,7 @@ This is also what makes the **Access grant graph** practical to serve live.
 |---|---|
 | `/api/health` shows a table `ok: false` | Grant the app SP `SELECT` on that schema ([Reference — grants](#reference--grants-live-mode-only)). |
 | Live tab shows a 503 "live read failed" | The warehouse is stopped or the grant is missing — the message names the exact object. |
-| `use_live: true` but data is still demo | If deploying via the bundle/UI, set `USE_LIVE`/`DATABRICKS_WAREHOUSE_ID` directly in `app.yaml`. If using the `deploy.sh` wrapper, it couldn't parse `customise.yaml` (no PyYAML on its `python3`) and fell back to defaults — run it with a `python3` that has `pyyaml`, or set the env directly in `app.yaml`. |
+| `USE_LIVE: "true"` but data is still demo | Confirm `USE_LIVE`, `DATABRICKS_WAREHOUSE_ID`, and `FINOPS_GOLD_SCHEMA` are set in `app.yaml`, that you re-ran the deploy, and that `finops_gold_sync` has run once (live pages read from gold). |
 | "Workspace has reached the maximum limit of 300 apps" | The target workspace is full — deploy to another workspace (system-table billing is account-wide, so any workspace in the same account sees the same usage). |
 | Tabs slow | Confirm the `finops_gold_sync` job has actually run — the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale (or you set the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch, which scans live). |
 | App won't boot in live mode ("LIVE MODE REQUIRES A GOLD SCHEMA") | Set `FINOPS_GOLD_SCHEMA` and redeploy — required in live mode. Read-only eval only: `FINOPS_ALLOW_LIVE_NO_GOLD=true`. |
@@ -884,8 +882,8 @@ npm run build
 
 - **Demo data:** everything the UI shows in demo mode comes from `data/generate_demo.py` (seeded, deterministic). Edit the seed data there — the KPI rollups and recommendation feed recompute from it, so numbers stay reconciled across pages.
 - **Recommendation catalogue:** add or tune operator plays in `reference/recommendation_catalog.yaml` (24 plays × 6 categories). Each play declares its trigger, impact, effort, and feature pills; the hub matcher + scorer in `data/rec_hub.py` picks it up automatically.
-- **Feature flags:** flip `features.genie` / `features.ai_narration` / `features.dqm` in `config.yaml` (or the matching env var — env wins) to pick a [deploy variant](#feature-flags--deploy-variants); hidden features are inert server-side. Set `genie_space_id` to point Ask Genie at your own Genie Space (blank ⇒ auto-create + auto-discover the FinOps Space in live; demo mode uses canned answers).
-- **Currency:** every page supports an AUD toggle alongside USD (list-price USD × `fx_rate` in `config.yaml`, clearly labelled).
+- **Feature flags:** flip `FINOPS_FEATURE_GENIE` / `FINOPS_FEATURE_AI_NARRATION` / `FINOPS_FEATURE_DQM` in `app.yaml` to pick a [deploy variant](#feature-flags--deploy-variants); hidden features are inert server-side. Set `genie_space_id` to point Ask Genie at your own Genie Space (blank ⇒ auto-create + auto-discover the FinOps Space in live; demo mode uses canned answers).
+- **Currency:** every page supports an AUD toggle alongside USD (list-price USD × `fx_rate` in `app.yaml`, clearly labelled).
 - **Theming:** CSS-var tokens in `frontend/src/index.css` + `frontend/tailwind.config.ts` (surface / card / border / accent, dark by default).
 
 ---

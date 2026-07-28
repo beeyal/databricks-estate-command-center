@@ -15,8 +15,7 @@
 --      values in app.yaml (the file the running app reads):
 --          FINOPS_WORKSPACE_BU_TABLE = main.finops_ref.workspace_bu
 --          FINOPS_USER_TEAM_TABLE    = main.finops_ref.user_team
---      (Or, on the ./deploy.sh path, set workspace_bu_table / user_team_table in
---      customise.yaml and deploy.sh writes them into app.yaml for you.) The BU /
+--      Set FINOPS_WORKSPACE_BU_TABLE / FINOPS_USER_TEAM_TABLE in app.yaml. The BU /
 --      team features light up immediately.
 --
 -- GRANT: the app's service principal needs USE CATALOG/SCHEMA + SELECT on these

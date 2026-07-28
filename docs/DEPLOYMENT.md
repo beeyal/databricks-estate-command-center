@@ -1,5 +1,15 @@
 # Deploying Estate Command Center into a customer workspace
 
+> [!IMPORTANT]
+> **Config is now ONE file: `app.yaml`.** The old `config.yaml`, `customise.yaml`,
+> and `deploy.sh` have been removed — there is no separate config to reconcile and no
+> shell wrapper. Everywhere below that mentions `deploy.sh`, `customise.yaml`, or
+> `config.yaml`, the equivalent is simply an env var in **`app.yaml`** (each value is
+> self-documented there), deployed with `databricks bundle deploy -t customer`. The
+> **[Customer deployment guide](CUSTOMER_DEPLOYMENT.md)** is the current, authoritative
+> step-by-step; prefer it over the historical detail in this file.
+
+
 This guide covers deploying the app into **any** Databricks workspace — your own
 or a customer's — with a Databricks Asset Bundle. The app is a **small always-on
 container** (~0.5 DBU/hr at `compute_size` MEDIUM, ≈ $270/mo — stop it and it costs

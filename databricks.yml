@@ -6,11 +6,10 @@
 #     databricks bundle deploy -t dev          # your own workspace (default)
 #     databricks bundle deploy -t customer     # a customer's workspace
 #
-# Onboarding a customer is CONFIG-ONLY — edit `customise.yaml` (never code) and
-# either run `./deploy.sh` (which reads customise.yaml → app.yaml env) or set the
-# variables below at deploy time. The App is a small always-on container (stop
+# Onboarding a customer is CONFIG-ONLY — edit `app.yaml` (the single config file;
+# never code) and `bundle deploy`. The App is a small always-on container (stop
 # it to pay nothing) and ships in demo mode, so no warehouse or system-table
-# grants are required just to stand it up. See docs/DEPLOYMENT.md.
+# grants are required just to stand it up. See docs/CUSTOMER_DEPLOYMENT.md.
 # ---------------------------------------------------------------------------
 
 bundle:
@@ -18,8 +17,8 @@ bundle:
 
 # ---------------------------------------------------------------------------
 # Variables — overridable per target or with `--var key=value` at deploy time.
-# These map onto the customer-facing fields in customise.yaml. Leaving the
-# defaults ships a fully-working demo (no live grants needed).
+# The customer-facing runtime config lives in app.yaml (env); these are just
+# bundle-level knobs. Leaving the defaults ships a fully-working demo.
 # ---------------------------------------------------------------------------
 variables:
   app_name:
@@ -40,8 +39,7 @@ variables:
       Claude model for optional LLM narration (FMAPI serving endpoint).
     default: databricks-claude-sonnet-4-6
 
-# Deploy under the current user's workspace files by default. `deploy.sh` then
-# points `databricks apps deploy` at this same `/files` path.
+# Deploy under the current user's workspace files by default.
 workspace:
   root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}
 
@@ -51,23 +49,19 @@ sync:
   include:
     - frontend/dist/**
   # Keep the deployed app lean — nothing below is needed at runtime, so it never
-  # lands in the customer's workspace (docs, screenshots, spec, local tooling,
-  # deploy-time-only config). The app runs on app.py + data/ + reference/ +
-  # config.yaml + app.yaml + frontend/dist + requirements.txt.
+  # lands in the customer's workspace (docs, screenshots, spec). The app runs on
+  # app.py + data/ + reference/ + app.yaml + frontend/dist + requirements.txt.
   exclude:
     - .claude
     - docs
     - "*.md"
-    - deploy.sh
-    - "customise*.yaml"
     - .gitignore
     - .databricksignore
 
 # ---------------------------------------------------------------------------
 # Resources — the App itself. Runtime config (feature flags, USE_LIVE,
-# GENIE_SPACE_ID, FX) lives in app.yaml `env`, written declaratively from
-# customise.yaml by deploy.sh. This keeps the bundle minimal and the same App
-# definition portable across every customer.
+# GENIE_SPACE_ID, FX) lives in app.yaml `env` — the single config file. This
+# keeps the bundle minimal and the same App definition portable across customers.
 # ---------------------------------------------------------------------------
 resources:
   apps:

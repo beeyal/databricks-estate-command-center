@@ -6,110 +6,158 @@ command:
   - --port
   - "8000"
 
-env:
-  # This is THE file the running app reads — edit these `value:`s to configure a
-  # deployment (customer name, warehouse, schemas, feature flags, org tables).
-  # These env values OVERRIDE config.yaml at runtime.
-  #   • Bundle deploy (`databricks bundle deploy`): edit values HERE.
-  #   • ./deploy.sh path: edit customise.yaml instead — deploy.sh writes the
-  #     matching values into this file for you on each deploy.
+# ============================================================================
+# Estate Command Center — the ONE file you configure.
+# ============================================================================
+# This is the only configuration file. Edit the `value:` on the lines below,
+# then deploy. There is nothing else to fill in.
+#
+# HOW TO EDIT: every entry is a `- name: … / value: …` pair. Change ONLY the
+# text inside the quotes on a `value:` line. Don't touch the `- name:` keys,
+# the `- `, or the indentation. Keep every value quoted. (If the app won't
+# start after an edit, run `git checkout app.yaml` to reset and try again.)
+#
+# ── The 30-second version ───────────────────────────────────────────────────
+#   • Just want to see it? Deploy as-is → DEMO mode (synthetic data, no setup).
+#   • Point it at your real estate? Set the 3 values under "LIVE MODE" below.
+#   • Everything else has a safe default and can be LEFT BLANK — each value
+#     says exactly what happens if you leave it blank.
+# ============================================================================
 
-  # Customer display label (cosmetic; shown in the app header / /api/config).
+env:
+
+  # ── Cosmetic ───────────────────────────────────────────────────────────────
+  # The name shown in the app header. Any text. (Purely a label.)
   - name: FINOPS_CUSTOMER_NAME
     value: "Acme Corp"
 
-  # Demo mode by default. Set USE_LIVE=true + DATABRICKS_WAREHOUSE_ID to read
-  # system tables live. Override in the App UI → Settings → Environment.
+  # ════════════════════════════════════════════════════════════════════════
+  # LIVE MODE — set these 3 to read your real Databricks estate.
+  # Leave all 3 as-is (false / blank / blank) to run in DEMO mode.
+  # ════════════════════════════════════════════════════════════════════════
+
+  # "true"  = read your real system tables (system.billing, query.history, …).
+  # "false" = DEMO mode with realistic synthetic data (no warehouse, no grants).
   - name: USE_LIVE
     value: "false"
+
+  # The SQL warehouse the app queries with (a serverless SQL warehouse in THIS
+  # workspace). REQUIRED when USE_LIVE="true". Leave blank in demo mode.
+  # → Grant the app's service principal CAN USE on it (see the deployment guide).
   - name: DATABRICKS_WAREHOUSE_ID
     value: ""
 
-  # Dual-currency FX (SPEC §9): AUD = USD list price × this rate. Indicative.
-  - name: FINOPS_FX_AUD
-    value: "1.52"
+  # Schema (catalog.schema, e.g. "main.finops_gold") the nightly finops_gold_sync
+  # job precomputes into — the app reads it in ~1s instead of scanning account-wide
+  # system tables on every page. REQUIRED when USE_LIVE="true"; ignored in demo.
+  # The job CREATES the schema + its tables for you — you only need CREATE on the
+  # catalog. (This same schema also stores acknowledge/dismiss state by default —
+  # see WRITEBACK below.)
+  - name: FINOPS_GOLD_SCHEMA
+    value: ""
 
-  # --- Deploy-time feature flags (SPEC §10) --------------------------------
-  # These env vars OVERRIDE config.yaml. deploy.sh --no-ai / --no-dqm set them.
-  # Four variants: AI+DQM / AI-only / DQM-only / neither. When a flag is off the
-  # matching surface is hidden AND its endpoint is inert (404) — no model/Genie
-  # call. The deterministic recommender, cost-attribution and Genie-cost view
-  # are ALWAYS on regardless (they call no model).
+  # ── Feature toggles (all optional; sensible defaults) ───────────────────────
+  # Set any to "false" to hide that surface (its API also goes inert — no half-
+  # rendered tabs, no model calls). Leave "true" to keep it on.
   #
-  # All three default ON. To ship a feature OFF on the bundle / UI deploy path,
-  # just change its value to "false" here (a plain edit — no Python, no deploy.sh)
-  # then `databricks bundle deploy`; or set the same env var on the app page in
-  # the UI. (deploy.sh's --no-genie / --no-narration / --no-ai / --no-dqm are
-  # only shortcuts that write these same values.)
-  # features.genie — the Ask Genie banner + /api/genie/ask SSE.
+  # Ask Genie banner (natural-language Q&A over your cost tables).
   - name: FINOPS_FEATURE_GENIE
     value: "true"
-  # features.ai_narration — LLM rationale on recommendations (FMAPI Claude).
+  # LLM-written rationale on recommendations (calls the Claude endpoint below).
+  # If "false", recommendations still appear with clear rule-based explanations —
+  # just no LLM phrasing. No model is ever called when off.
   - name: FINOPS_FEATURE_AI_NARRATION
     value: "true"
-  # features.dqm — the Data Quality Monitoring tab + /api/dqm.
+  # Data Quality tab (reads system.data_quality_monitoring — needs that grant).
   - name: FINOPS_FEATURE_DQM
     value: "true"
-  # features.writeback — acknowledge/ignore on every alert surface. Default on.
-  # LIVE-MODE NOTE: with the default Delta backend, writeback persists into a
-  # small table in your WRITEBACK SCHEMA — it needs `FINOPS_GOLD_SCHEMA` (below)
-  # OR `FINOPS_WRITEBACK_SCHEMA` set, AND the app's service principal granted
-  # CREATE+MODIFY on that schema. If neither schema is set, the app reports
-  # writeback OFF (the ack controls hide) rather than letting acks silently fail.
-  # The Lakebase target (`-t customer-lakebase`) needs none of this — it self-
-  # provisions its own schema. Demo mode always works (in-process).
+  # Acknowledge / dismiss controls on alerts (so a known-OK item stops nagging).
+  # See WRITEBACK below for where the state is stored. Set "false" for a strictly
+  # read-only deployment (controls hidden). Leave "true" for the normal experience.
   - name: FINOPS_FEATURE_WRITEBACK
     value: "true"
-  # Schema for the writeback (acknowledge/ignore) Delta table in live mode.
-  # Blank ⇒ falls back to FINOPS_GOLD_SCHEMA. Set one of them for live writeback.
+
+  # ════════════════════════════════════════════════════════════════════════
+  # WRITEBACK STORAGE — where acknowledge/dismiss state is saved (live mode).
+  #
+  #   You do NOT choose "Delta vs Lakebase" here — the DEPLOY TARGET decides:
+  #     • `databricks bundle deploy -t customer`           → DELTA  (default)
+  #         Stores one tiny table in the schema below. No extra infrastructure.
+  #     • `databricks bundle deploy -t customer-lakebase`  → LAKEBASE (Postgres)
+  #         The bundle creates + wires a managed Postgres instance automatically.
+  #         Lower latency at large scale; adds a small always-on cost.
+  #
+  #   Pick Delta (the default) unless you specifically want Postgres-backed
+  #   writeback. Demo mode ignores all of this (state is in-memory).
+  # ════════════════════════════════════════════════════════════════════════
+
+  # DELTA target only: schema for the acknowledge/dismiss table.
+  # LEAVE BLANK to reuse FINOPS_GOLD_SCHEMA (the usual choice — nothing to set).
+  # Set a separate schema only if you want the state kept apart from gold.
   - name: FINOPS_WRITEBACK_SCHEMA
     value: ""
-  # Postgres SCHEMA name for the Lakebase writeback backend (customer-lakebase
-  # target). Blank ⇒ "finops". The app's service principal OWNS this schema (it's
-  # auto-created on first write), so it must be UNIQUE to this app: if you ever
-  # DELETE + recreate the app, its NEW service principal cannot use the OLD SP's
-  # schema (Postgres "permission denied for schema finops"), which makes every
-  # acknowledge silently fail. On a recreate, set a fresh name here (e.g. "estate")
-  # so the new SP creates + owns its own schema. Ignored by the Delta backend.
+
+  # LAKEBASE target only: the Postgres schema name the app owns for its state.
+  # LEAVE BLANK ⇒ "finops". Set a UNIQUE name (e.g. your company) if you ever
+  # DELETE + recreate the app — the new app gets a new identity that can't reuse
+  # the old one's schema, so a fresh name avoids a "permission denied" on acks.
+  # Ignored by the Delta target.
   - name: FINOPS_LAKEBASE_SCHEMA
     value: ""
 
-  # Genie Space curated over cost/usage tables. Blank ⇒ demo mode returns canned
-  # streamed answers grounded in the demo data.
+  # ── AI endpoint (only used when FINOPS_FEATURE_AI_NARRATION / Genie are on) ──
+  # The Claude serving endpoint for recommendation narration. The default is a
+  # standard workspace endpoint. Point at an in-region model if your account has
+  # data-residency requirements. Blank ⇒ deterministic rule text (no model call).
+  - name: FINOPS_LLM_ENDPOINT
+    value: "databricks-claude-sonnet-4-6"
+
+  # Genie Space id for Ask Genie. LEAVE BLANK ⇒ the app auto-creates one over your
+  # cost/usage tables on first run (nothing to set). Set an id only to pin a
+  # specific, pre-curated Space.
   - name: GENIE_SPACE_ID
     value: ""
 
-  # FMAPI Claude endpoint for ai_narration; blank ⇒ deterministic rule text.
-  - name: FINOPS_LLM_ENDPOINT
-    value: "databricks-claude-sonnet-4-6"
-  - name: FINOPS_ROLLUP_SCHEMA
-    value: ""
-  # Bump this string to invalidate all persisted payload-cache entries at once
-  # (e.g. after editing the workspace->BU mapping or other reference data the
-  # built payloads bake in). Old-version rows age out on their own.
-  - name: FINOPS_CACHE_VERSION
-    value: "2"
-  # Gold-table serving schema (nightly finops_gold_sync writes here; app reads it
-  # in ~1s). REQUIRED in live mode — the app refuses to boot with USE_LIVE=true and
-  # this blank (account-wide system-table scans per request aren't production-
-  # viable). Demo mode ignores it. Read-only-eval escape hatch: FINOPS_ALLOW_LIVE_
-  # NO_GOLD=true (slow, not for prod).
-  - name: FINOPS_GOLD_SCHEMA
-    value: ""
-  - name: FINOPS_INGEST_SCHEMA
-    value: ""
-  # LEAVE BLANK for a normal `databricks bundle deploy` — the bundle already
-  # creates the two jobs. Only set this on a UI-only "Create app" deploy (no
-  # bundle), to the workspace folder holding the code, so the app can self-create
-  # the jobs. Setting it on a bundle deploy would create DUPLICATE jobs.
-  - name: FINOPS_SOURCE_PATH
-    value: ""
-  - name: FINOPS_JOB_RUN_AS
-    value: ""
-  # Optional customer table mapping workspace_id -> business unit (+ owner). Blank
-  # ⇒ the app hides all BU columns/filters/splits (no system-table org source).
+  # ── Currency ────────────────────────────────────────────────────────────────
+  # Adds an AUD toggle: AUD = USD list price × this rate (indicative only).
+  # Leave as-is if you don't need it.
+  - name: FINOPS_FX_AUD
+    value: "1.52"
+
+  # ════════════════════════════════════════════════════════════════════════
+  # OPTIONAL EXTRAS — every one of these can be LEFT BLANK.
+  # ════════════════════════════════════════════════════════════════════════
+
+  # Business-unit reporting: a table you maintain mapping workspace_id → business
+  # unit (+ optional owner), e.g. "main.finops_ref.workspace_bu". BLANK ⇒ the app
+  # simply hides all BU columns/filters (no fake data). See
+  # reference/mapping_tables_setup.sql for the table shape.
   - name: FINOPS_WORKSPACE_BU_TABLE
     value: ""
-  # Optional user -> team mapping table for the Adoption tab. Blank ⇒ team hidden.
+  # Team reporting on the Adoption tab: a table mapping user → team, e.g.
+  # "main.finops_ref.user_team". BLANK ⇒ the app hides the team column. Same
+  # reference SQL as above.
   - name: FINOPS_USER_TEAM_TABLE
+    value: ""
+
+  # Admin-data schema for the finops_admin_sync job (budgets, policies, tokens,
+  # groups — data that isn't in the plain system tables). BLANK ⇒ those specific
+  # governance/access panels show a "run the admin-sync job" note; everything else
+  # works. Set it (+ unpause finops_admin_sync) to fill those panels.
+  - name: FINOPS_INGEST_SCHEMA
+    value: ""
+
+  # ── Advanced (you almost certainly leave these blank) ───────────────────────
+  # Bump this string to force-drop all cached payloads at once (e.g. after
+  # changing a mapping table). Old entries also age out on their own.
+  - name: FINOPS_CACHE_VERSION
+    value: "2"
+  # Only for a UI-only "Create app" deploy WITHOUT the bundle: the workspace path
+  # holding the code, so the app can self-create its jobs. BLANK for the normal
+  # `bundle deploy` path (the bundle already creates the jobs — setting this then
+  # would make DUPLICATES).
+  - name: FINOPS_SOURCE_PATH
+    value: ""
+  # Optional service principal to run the auto-created jobs as (UI-only path).
+  - name: FINOPS_JOB_RUN_AS
     value: ""

@@ -74,82 +74,72 @@ Click **Create**. The code lands at `/Workspace/Users/<you>/databricks-estate-co
 
 ## Step ② — Set your configuration
 
-> [!TIP]
-> **Want to see it running first?** Skip this step and go straight to Step ③ — a bare
-> deploy stands the app up in **demo mode** (synthetic data, no warehouse, no grants), so
-> you can click around immediately. Come back and set these values when you're ready to
-> point it at your real estate.
+**There is one file to edit: `app.yaml`.** (No `config.yaml`, no `customise.yaml` — just
+this one.) Open it in the Git folder. It's a list of `- name: … / value: …` pairs, each
+with a comment explaining what it does and what happens if you leave it blank.
 
-**`app.yaml` is the one and only file you edit** — it holds all configuration (customer
-name, warehouse, schemas, feature flags, and the optional org tables in Step ⑥). Open it
-inside that Git folder (double-click it in the file browser). It's a list of `- name: … /
-value: …` entries — just fill in the `value:` for these three:
+> [!TIP]
+> **Want to see it first?** Do nothing here and jump to Step ③ — deploying as-is runs the
+> app in **demo mode** (realistic synthetic data, no warehouse, no grants). Come back when
+> you're ready to point it at your real estate.
+
+### To go live, set these **3** values (everything else can stay as-is):
 
 ```yaml
   - name: USE_LIVE
-    value: "true"                                        # read your real system tables
+    value: "true"                              # read your real system tables
+
   - name: DATABRICKS_WAREHOUSE_ID
-    value: "<your-serverless-sql-warehouse-id>"          # a serverless SQL warehouse in this workspace
+    value: "<serverless-sql-warehouse-id>"     # a serverless SQL warehouse in THIS workspace
+
   - name: FINOPS_GOLD_SCHEMA
-    value: "main.finops_gold"                            # REQUIRED in live mode — schema the nightly gold-sync job precomputes into
+    value: "main.finops_gold"                  # catalog.schema the nightly job precomputes into
 ```
+
+That's the whole required configuration. Deploy (Step ③), grant the app read access
+(Step ④), and run the gold job once (Step ⑤).
+
+**What each of the three does:**
+
+| Value | What it is | Leave blank? |
+|---|---|---|
+| `USE_LIVE` | `"true"` = real data, `"false"` = demo. | Leave `"false"` for demo. |
+| `DATABRICKS_WAREHOUSE_ID` | The serverless SQL warehouse the app queries with. Grant its service principal **CAN USE** (Step ④). | Required for live; blank in demo. |
+| `FINOPS_GOLD_SCHEMA` | Where the nightly `finops_gold_sync` job stores its pre-aggregated tables. The app reads these in ~1 s instead of scanning account-wide system tables on every page. **The job creates the schema + tables for you** — you just need `CREATE` on the catalog. | Required for live; ignored in demo. |
 
 > [!IMPORTANT]
-> **`FINOPS_GOLD_SCHEMA` is required in live mode.** The app's reads run over
-> `system.billing.usage`, `system.query.history`, `system.lakeflow.*` and friends,
-> which are **account-wide** — every workspace in your account, tens of millions of
-> rows. Running those scans live on every page load is not production-viable, so the
-> app **refuses to boot in live mode unless a gold schema is set**. The nightly
-> `finops_gold_sync` job pre-aggregates the whole estate **once** into small Delta
-> tables the app then reads in ~1 second. You just set the schema here and unpause the
-> job (step ⑤); the job **creates the schema and every table underneath it** — you only
-> need `CREATE` on the catalog (or a pre-created schema with `CREATE, MODIFY` granted to
-> the job's service principal). For a **read-only eval** where you can't grant a writable
-> schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` to run straight off system tables —
-> expect slow page loads; not for production.
->
-> **Sequence:** after you flip to live and deploy, the estate pages read from gold, so
-> they stay empty until the **first `finops_gold_sync` run** — run that job once manually
-> right after you unpause it (step ⑤) rather than waiting for the nightly schedule.
+> **Why gold is required for live.** The app reads `system.billing.usage`,
+> `system.query.history`, `system.lakeflow.*` — account-wide tables with tens of millions
+> of rows. Scanning those on every page load isn't viable, so a nightly job pre-aggregates
+> them once into the gold schema and the app reads that. The app **won't start in live mode
+> without `FINOPS_GOLD_SCHEMA` set**. (Read-only eval with no writable schema? Set
+> `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` to read straight off system tables — slow, not for
+> production.) After going live, run `finops_gold_sync` **once** (Step ⑤) or the estate
+> pages stay empty until the first nightly run.
 
-> [!NOTE]
-> **Acknowledge/ignore (writeback) is on by default and mostly self-configuring.** In live
-> mode with the default Delta backend, the app stores dismissals in its own
-> `finops_ack_status` table and **auto-creates the schema + table for you** (and enables
-> Predictive Optimization + Liquid Clustering on it — the app dog-foods its own advice). All
-> you do is point it at a schema: set `FINOPS_WRITEBACK_SCHEMA` (or leave it blank to reuse
-> `FINOPS_GOLD_SCHEMA`) — both are entries in this same `app.yaml`. The app's service
-> principal needs `CREATE` on that schema's **catalog** (so it can make the schema/table); if
-> your catalog is locked down, pre-create the schema and grant the SP `CREATE, MODIFY` on it
-> (step ④ has the one grant). If no schema is configured at all, the app reports writeback
-> **off** and hides the ack controls — it never silently loses a dismissal. The
-> `customer-lakebase` target needs none of this (it self-provisions its own Postgres schema).
+### Everything else is optional — leave it blank unless you want it
 
-To leave a feature out, set its `value:` to `"false"`:
-`FINOPS_FEATURE_DQM` (Data Quality tab), `FINOPS_FEATURE_GENIE` (Ask Genie banner),
-`FINOPS_FEATURE_AI_NARRATION` (AI rationale on recommendations),
-`FINOPS_FEATURE_WRITEBACK` (acknowledge/ignore controls). DQM, Genie and writeback
-ship **on**; AI narration is on in this repo's config (its built-in default is off).
+Every other value in `app.yaml` has a safe default and its comment says what blank does.
+The common ones:
 
-**To rename the app header** (e.g. "Acme Corp" → your company), change only the `value:`
-of the `FINOPS_CUSTOMER_NAME` entry — it's a cosmetic label, any text is fine:
-
-```yaml
-  - name: FINOPS_CUSTOMER_NAME
-    value: "Acme Corp"     # ← change ONLY this value
-```
+- **`FINOPS_CUSTOMER_NAME`** — the label in the app header. Change to your company (cosmetic).
+- **Feature toggles** (`FINOPS_FEATURE_GENIE` / `_AI_NARRATION` / `_DQM` / `_WRITEBACK`) —
+  all ship **on**. Set any to `"false"` to hide that surface (its API also goes inert — no
+  half-rendered tabs, no model calls).
+- **Acknowledge/dismiss storage** — on by default. **You don't pick a storage type here —
+  the deploy target does** (see Step ③): the default `customer` target stores it in a tiny
+  Delta table in your gold schema (nothing to set — leave `FINOPS_WRITEBACK_SCHEMA` blank to
+  reuse the gold schema); the `customer-lakebase` target uses managed Postgres and wires
+  itself up. If the app can't write the state it reports writeback **off** and hides the
+  controls — it never silently drops a dismissal.
+- **Business-unit / team reporting** (`FINOPS_WORKSPACE_BU_TABLE`, `FINOPS_USER_TEAM_TABLE`)
+  — blank hides those columns (Step ⑥ if you want them).
 
 > [!WARNING]
-> `app.yaml`'s `env:` is a YAML **list** — every entry is a `- name:` / `value:` pair.
-> Edit only the text inside the quotes on a `value:` line. Don't change the `- name:`
-> keys, don't remove the `- ` or the two-space indent, and keep every value quoted.
-> A broken list item makes the app fail to start — if that happens, `git checkout app.yaml`
-> to reset and re-edit just the value. (This is the one thing to be careful with; nothing
-> else in the file needs touching.)
-
-> [!TIP]
-> Anything hidden this way is also inert server-side — its endpoint is absent, not just
-> unrendered. The app never half-renders a tab.
+> `app.yaml`'s `env:` is a YAML **list**. Edit only the text inside the quotes on a
+> `value:` line — don't change the `- name:` keys, the `- `, or the indentation, and keep
+> every value quoted. If the app won't start after an edit, run `git checkout app.yaml` to
+> reset and re-edit just the value.
 
 ---
 
@@ -170,25 +160,25 @@ URL. You don't sign in or paste a token — the notebook runs **as you**, so the
 authenticates automatically. Open the printed URL and the app is live.
 
 > [!NOTE]
-> **Which target?** `-t customer` is the right choice for almost everyone. There's one
-> optional alternative:
+> **Which target — `customer` or `customer-lakebase`?**
+> **Use `customer` (Delta).** It's the right choice for almost everyone and needs no
+> extra infrastructure. The only thing the deploy target decides is **where the
+> acknowledge/dismiss state is stored**:
 >
-> | Deploy target | What you get | Cost |
+> | Target | Acknowledge/dismiss state stored in | When to pick it |
 > |---|---|---|
-> | **`customer`** *(default)* | Everything, including **acknowledge/ignore** on alerts (stored in a small Delta table in a writeback schema). | No extra infra, but in live mode the Delta backend needs a writeback schema set + one grant — see the note below. |
-> | **`customer-lakebase`** | Same, but the bundle also creates a small **Lakebase (managed Postgres)** instance for lower-latency acknowledge/ignore at large scale. You set nothing — the bundle creates, binds, and grants it (**needs none** of the writeback-schema setup below). | Adds one always-on CU_1 instance (~tens of $/mo). |
+> | **`customer`** *(default)* | A tiny **Delta** table in your gold schema. Auto-created; no extra infra, no extra cost. | **Almost always. Start here.** |
+> | **`customer-lakebase`** | A managed **Postgres (Lakebase)** instance the bundle creates + wires for you. | Only if you want lower-latency writeback at very large scale, and accept a small always-on instance cost (~tens of $/mo). |
 >
-> **Live-mode writeback (Delta backend) needs a schema + one grant.** Acknowledge/ignore
-> is on by default and, on the `customer` (Delta) target in live mode, persists a single
-> `finops_ack_status` table in a **writeback schema**. So (1) set a writeback schema —
-> either the existing `FINOPS_GOLD_SCHEMA` **or** the dedicated `FINOPS_WRITEBACK_SCHEMA`
-> (both live in `app.yaml`) — and (2) `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO
-> \`<app-service-principal>\``. If neither schema is set, the app reports writeback **off**
-> and hides the ack controls (it no longer silently fails). The `customer-lakebase` target
-> needs none of this — state lives in the bound Postgres.
+> **On the default `customer` target you don't set anything for writeback** — it stores its
+> state in `FINOPS_GOLD_SCHEMA` (which you already set), auto-creates the table, and the
+> app's service principal already has access from the Step ④ grant. (Advanced: point it at
+> a different schema with `FINOPS_WRITEBACK_SCHEMA` if you want the state kept separate.)
+> The `customer-lakebase` target self-provisions its Postgres — also nothing to set.
 >
-> Both are a single `bundle deploy`. Start with `customer`; switch later by re-running
-> with the other target (run `databricks bundle deployment bind estate estate-command-center -t <target>` once first, so the bundle adopts the existing app instead of erroring that it already exists).
+> Both are a single `bundle deploy`. To switch targets later, run
+> `databricks bundle deployment bind estate estate-command-center -t <target>` once first so
+> the bundle adopts the existing app instead of erroring that it already exists.
 
 ---
 

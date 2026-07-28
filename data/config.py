@@ -1,11 +1,12 @@
 """Deploy-time configuration + feature-flag resolution (SPEC §10, §14).
 
 Single source of truth for the flag contract consumed by ``app.py`` and every
-``/api/*`` endpoint. Precedence (highest first):
+``/api/*`` endpoint. Configuration is driven ENTIRELY by environment variables
+set in ``app.yaml`` (the one and only config file) — there is no separate config
+file to reconcile. Precedence (highest first):
 
   1. Environment variable  (FINOPS_FEATURE_*, USE_LIVE, GENIE_SPACE_ID, …)
-  2. ``config.yaml``        (optional; sits next to app.py)
-  3. Built-in default
+  2. Built-in default
 
 The three feature flags gate optional surfaces (SPEC §10):
 
@@ -22,10 +23,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
-
-_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
 
 # Built-in defaults (lowest precedence). Genie + DQM default on; ai_narration
 # off (the deterministic rule text is the safe default — no model call).
@@ -91,30 +89,13 @@ def _as_bool(val: Any, fallback: bool) -> bool:
     return str(val).strip().lower() in ("1", "true", "yes", "on")
 
 
-@lru_cache(maxsize=1)
-def _file_config() -> dict[str, Any]:
-    """Load config.yaml if present. Never raises — a missing/broken file just
-    means the env + defaults take over."""
-    if not _CONFIG_PATH.exists():
-        return {}
-    try:
-        import yaml  # type: ignore
-
-        loaded = yaml.safe_load(_CONFIG_PATH.read_text()) or {}
-        return loaded if isinstance(loaded, dict) else {}
-    except Exception:
-        return {}
-
-
 def _resolve_flag(name: str, key: str) -> bool:
-    """Resolve one feature flag: env var > config.yaml > default."""
+    """Resolve one feature flag: env var > built-in default."""
     default = bool(_DEFAULTS["features"][key])
-    file_features = _file_config().get("features") or {}
-    file_val = file_features.get(key, default)
     env_val = os.environ.get(name)
     if env_val is not None:
-        return _as_bool(env_val, _as_bool(file_val, default))
-    return _as_bool(file_val, default)
+        return _as_bool(env_val, default)
+    return default
 
 
 @lru_cache(maxsize=1)
@@ -129,14 +110,11 @@ def get_features() -> dict[str, bool]:
 
 
 def _resolve_scalar(env_names: list[str], key: str) -> Any:
-    """Resolve a scalar config value: env var > config.yaml > default."""
+    """Resolve a scalar config value: env var > built-in default."""
     for env in env_names:
         val = os.environ.get(env)
         if val not in (None, ""):
             return val
-    file_val = _file_config().get(key)
-    if file_val not in (None, ""):
-        return file_val
     return _DEFAULTS[key]
 
 
@@ -191,6 +169,5 @@ def team_enabled() -> bool:
 
 def reset_cache() -> None:
     """Clear memoised config — used by tests that mutate the environment."""
-    _file_config.cache_clear()
     get_features.cache_clear()
     get_settings.cache_clear()
