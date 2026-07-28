@@ -37,7 +37,10 @@ _DEFAULTS: dict[str, Any] = {
     # switchable off (FINOPS_FEATURE_WRITEBACK=false) for a strictly read-only
     # deployment — the controls hide + endpoints 404 when off.
     "features": {"genie": True, "ai_narration": False, "dqm": True, "writeback": True},
-    "use_live": False,
+    # Live is the shipped default. When USE_LIVE is unset the app still only serves
+    # live once a warehouse + gold schema are configured; otherwise it falls back to
+    # demo with a "finish setup" banner (see app.py). Explicit USE_LIVE=false stays demo.
+    "use_live": True,
     "genie_space_id": "",
     "warehouse_id": "",
     "fx_rate": 1.52,

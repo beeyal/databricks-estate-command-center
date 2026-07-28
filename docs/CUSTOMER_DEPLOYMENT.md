@@ -160,21 +160,23 @@ URL. You don't sign in or paste a token — the notebook runs **as you**, so the
 authenticates automatically. Open the printed URL and the app is live.
 
 > [!NOTE]
-> **Which target — `customer` or `customer-lakebase`?**
-> **Use `customer` (Delta).** It's the right choice for almost everyone and needs no
-> extra infrastructure. The only thing the deploy target decides is **where the
-> acknowledge/dismiss state is stored**:
+> **Which target — `customer` or `customer-delta`?**
+> **Use `customer` (the recommended default).** The only thing the deploy target decides is
+> **where the acknowledge/dismiss state is stored** — the app itself is identical either way:
 >
 > | Target | Acknowledge/dismiss state stored in | When to pick it |
 > |---|---|---|
-> | **`customer`** *(default)* | A tiny **Delta** table in your gold schema. Auto-created; no extra infra, no extra cost. | **Almost always. Start here.** |
-> | **`customer-lakebase`** | A managed **Postgres (Lakebase)** instance the bundle creates + wires for you. | Only if you want lower-latency writeback at very large scale, and accept a small always-on instance cost (~tens of $/mo). |
+> | **`customer`** *(recommended)* | A small managed **Lakebase (Postgres)** instance the bundle creates + wires for you. Snappy at any scale; fully self-provisioned (nothing to set). | **The default. Use this** unless you specifically don't want a managed-Postgres instance. Adds one small always-on instance (~tens of $/mo). |
+> | **`customer-delta`** | A tiny **Delta** table via your warehouse. Zero extra infrastructure, zero extra cost. | The fallback for **"don't use Lakebase."** In live mode it needs a writeback schema + one grant (below). |
 >
-> **On the default `customer` target you don't set anything for writeback** — it stores its
-> state in `FINOPS_GOLD_SCHEMA` (which you already set), auto-creates the table, and the
-> app's service principal already has access from the Step ④ grant. (Advanced: point it at
-> a different schema with `FINOPS_WRITEBACK_SCHEMA` if you want the state kept separate.)
-> The `customer-lakebase` target self-provisions its Postgres — also nothing to set.
+> **On `customer` (Lakebase) you set nothing for writeback** — the bundle creates the
+> instance, binds it, and auto-provisions the app's Postgres role. (If you ever delete +
+> recreate the app, set a fresh `FINOPS_LAKEBASE_SCHEMA` so the new app owns its own schema.)
+>
+> **On `customer-delta`** writeback uses a `finops_ack_status` Delta table in your writeback
+> schema — leave `FINOPS_WRITEBACK_SCHEMA` blank to reuse `FINOPS_GOLD_SCHEMA` (the app
+> auto-creates the table; the Step ④ grant covers it). If it can't write, the app reports
+> writeback off and hides the controls — never a silent loss.
 >
 > Both are a single `bundle deploy`. To switch targets later, run
 > `databricks bundle deployment bind estate estate-command-center -t <target>` once first so

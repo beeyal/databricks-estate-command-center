@@ -151,51 +151,37 @@ resources:
 
 # ---------------------------------------------------------------------------
 # Targets — pick with `-t <target>`.
-#   dev             : your own workspace, development mode (default).
-#   customer        : the customer's workspace. Writeback is ON and backed by a
-#                     small Delta table via the read warehouse — ZERO extra infra,
-#                     zero extra cost, works everywhere. This is the recommended
-#                     default deploy.
-#   customer-lakebase: same as `customer`, PLUS a bundle-created Lakebase
-#                     (managed Postgres) instance bound to the app for
-#                     lower-latency writeback at scale. The opt-in premium path.
+#   dev            : your own workspace, development mode (local default).
+#   customer       : THE recommended customer deploy. Creates a small managed
+#                    Lakebase (Postgres) instance, bound to the app, for the
+#                    acknowledge/dismiss writeback state — snappy at any scale and
+#                    fully self-provisioned (no CLI, no env var, no manual role).
+#                    Adds one small always-on instance (~tens of $/mo).
+#   customer-delta : the FALLBACK for "don't use Lakebase". Same app, but writeback
+#                    state lives in a tiny Delta table via the read warehouse —
+#                    ZERO extra infrastructure, zero extra cost. Use this if the
+#                    customer doesn't want a managed-Postgres instance.
 #
-# WHY A SEPARATE TARGET for Lakebase (not a boolean flag): a Databricks Asset
-# Bundle cannot conditionally include/omit a *resource* from a variable — it has
-# no ternary, and you can't interpolate a whole resource map. Creating vs not
+# WHY TWO TARGETS (not a boolean flag): a Databricks Asset Bundle cannot
+# conditionally include/omit a *resource* from a variable — creating vs not
 # creating the Lakebase instance is therefore expressed as two targets. Writeback
-# itself is always on (it's cheap, valuable, and independent of AI/Genie); the
-# only choice here is the STORAGE BACKEND: Delta (default) vs Lakebase (opt-in).
+# itself is always on (cheap, valuable, independent of AI/Genie); the only choice
+# here is the STORAGE BACKEND — Lakebase (recommended, `customer`) vs Delta
+# (fallback, `customer-delta`). store.py auto-selects Lakebase whenever the bound
+# instance is present, else Delta, so the app code is identical on both.
 # ---------------------------------------------------------------------------
 targets:
   dev:
     default: true
     mode: development
 
+  # RECOMMENDED customer deploy — Lakebase-backed writeback.
+  # PORTABLE: no host is hardcoded, so this deploys into WHATEVER workspace your
+  # CLI profile points at — `databricks auth login --profile <name>` then
+  # `databricks bundle deploy -t customer -p <name>`. Binding the Lakebase
+  # instance to the app auto-provisions the app SP's Postgres role and injects
+  # PGHOST/PGUSER/… at runtime, so store.py uses the Lakebase backend.
   customer:
-    mode: production
-    # PORTABLE: no host is hardcoded, so this deploys into WHATEVER workspace your
-    # CLI profile points at — `databricks auth login --profile <name>` then
-    # `databricks bundle deploy -t customer -p <name>`. Source syncs under your
-    # own user path, so nothing here is specific to one workspace.
-    workspace:
-      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
-    variables:
-      app_name: estate-command-center
-      # For live mode, set your serverless SQL warehouse id (or pass
-      # `--var warehouse_id=<id>`). Leave 'auto' for demo mode.
-      # warehouse_id: <your-serverless-warehouse-id>
-    # No Lakebase here: writeback (on by default) uses the Delta backend — a tiny
-    # managed Delta table written through the same read warehouse. Nothing extra
-    # to provision, no Postgres cost.
-
-  # Opt-in premium backend: identical to `customer` but ALSO creates a Lakebase
-  # instance and binds it to the app. The customer runs only
-  # `databricks bundle deploy -t customer-lakebase` — no CLI, no env var, no
-  # manual Postgres role: binding the instance to the app auto-provisions the
-  # app's service-principal role and injects PGHOST/PGUSER/PGINSTANCE/… at
-  # runtime, so store.py auto-selects the Lakebase backend over Delta.
-  customer-lakebase:
     mode: production
     workspace:
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
@@ -214,3 +200,15 @@ targets:
                 instance_name: ${resources.database_instances.finops_state.name}
                 database_name: databricks_postgres
                 permission: CAN_CONNECT_AND_CREATE
+
+  # FALLBACK — "don't use Lakebase". No Postgres instance; writeback (still on)
+  # uses the Delta backend: a tiny managed Delta table written through the same
+  # read warehouse. Nothing extra to provision, no Postgres cost. In live mode
+  # this needs a writeback schema (FINOPS_GOLD_SCHEMA or FINOPS_WRITEBACK_SCHEMA)
+  # + the app SP granted CREATE on its catalog — see the customer deployment guide.
+  customer-delta:
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      app_name: estate-command-center

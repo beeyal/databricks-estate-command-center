@@ -55,6 +55,14 @@ function App() {
       <Nav demo={config?.demo ?? true} mode={config?.mode ?? "demo"} currencies={currencies} />
       {/* No live-mode banner — the customer doesn't need it. Demo mode is marked
           by the "Demo data" badge in the nav; live mode shows no chrome. */}
+      {/* Live was requested but the app fell back to demo (warehouse/gold not set
+          yet) — tell the operator exactly how to finish going live. */}
+      {config?.live_setup_note && (
+        <div className="border-b border-warning/30 bg-warning/10 px-4 py-2 text-[13px] text-brand-dark">
+          <span className="font-semibold text-warning">Finish setup to go live — </span>
+          {config.live_setup_note}
+        </div>
+      )}
       {/* Ask Genie banner — only when features.genie is on (SPEC §11) */}
       {features.genie && <AskGenieBanner />}
       <main>

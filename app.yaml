@@ -18,8 +18,11 @@ command:
 # start after an edit, run `git checkout app.yaml` to reset and try again.)
 #
 # ── The 30-second version ───────────────────────────────────────────────────
-#   • Just want to see it? Deploy as-is → DEMO mode (synthetic data, no setup).
-#   • Point it at your real estate? Set the 3 values under "LIVE MODE" below.
+#   • This ships in LIVE mode. Set the 2 values under "LIVE MODE" below
+#     (warehouse + gold schema) and deploy → it reads your real estate.
+#   • Haven't set them yet? The app still boots — it shows DEMO data with a
+#     "finish setup to go live" banner until you fill them in. (To stay in demo
+#     on purpose, set USE_LIVE to "false".)
 #   • Everything else has a safe default and can be LEFT BLANK — each value
 #     says exactly what happens if you leave it blank.
 # ============================================================================
@@ -32,14 +35,15 @@ env:
     value: "Acme Corp"
 
   # ════════════════════════════════════════════════════════════════════════
-  # LIVE MODE — set these 3 to read your real Databricks estate.
-  # Leave all 3 as-is (false / blank / blank) to run in DEMO mode.
+  # LIVE MODE — ships ON. Set the warehouse + gold schema below to read your
+  # real estate. Until they're set, the app boots in DEMO with a setup banner.
+  # (Set USE_LIVE to "false" to stay in demo deliberately.)
   # ════════════════════════════════════════════════════════════════════════
 
   # "true"  = read your real system tables (system.billing, query.history, …).
   # "false" = DEMO mode with realistic synthetic data (no warehouse, no grants).
   - name: USE_LIVE
-    value: "false"
+    value: "true"
 
   # The SQL warehouse the app queries with (a serverless SQL warehouse in THIS
   # workspace). REQUIRED when USE_LIVE="true". Leave blank in demo mode.
@@ -80,28 +84,30 @@ env:
   # ════════════════════════════════════════════════════════════════════════
   # WRITEBACK STORAGE — where acknowledge/dismiss state is saved (live mode).
   #
-  #   You do NOT choose "Delta vs Lakebase" here — the DEPLOY TARGET decides:
-  #     • `databricks bundle deploy -t customer`           → DELTA  (default)
-  #         Stores one tiny table in the schema below. No extra infrastructure.
-  #     • `databricks bundle deploy -t customer-lakebase`  → LAKEBASE (Postgres)
-  #         The bundle creates + wires a managed Postgres instance automatically.
-  #         Lower latency at large scale; adds a small always-on cost.
+  #   You do NOT choose "Lakebase vs Delta" here — the DEPLOY TARGET decides:
+  #     • `databricks bundle deploy -t customer`        → LAKEBASE (recommended)
+  #         The bundle creates + wires a managed Postgres instance for you.
+  #         Snappy at any scale; nothing to set below.
+  #     • `databricks bundle deploy -t customer-delta`  → DELTA (fallback)
+  #         For "don't use Lakebase" — stores one tiny table in the schema below.
+  #         No extra infrastructure, no extra cost.
   #
-  #   Pick Delta (the default) unless you specifically want Postgres-backed
-  #   writeback. Demo mode ignores all of this (state is in-memory).
+  #   Use the default (`-t customer`, Lakebase) unless you specifically don't want
+  #   a managed-Postgres instance. Demo mode ignores all of this (state in-memory).
   # ════════════════════════════════════════════════════════════════════════
 
-  # DELTA target only: schema for the acknowledge/dismiss table.
+  # DELTA fallback only (`-t customer-delta`): schema for the ack/dismiss table.
   # LEAVE BLANK to reuse FINOPS_GOLD_SCHEMA (the usual choice — nothing to set).
   # Set a separate schema only if you want the state kept apart from gold.
+  # Ignored on the Lakebase (default) target.
   - name: FINOPS_WRITEBACK_SCHEMA
     value: ""
 
-  # LAKEBASE target only: the Postgres schema name the app owns for its state.
-  # LEAVE BLANK ⇒ "finops". Set a UNIQUE name (e.g. your company) if you ever
-  # DELETE + recreate the app — the new app gets a new identity that can't reuse
-  # the old one's schema, so a fresh name avoids a "permission denied" on acks.
-  # Ignored by the Delta target.
+  # LAKEBASE default only (`-t customer`): the Postgres schema the app owns for
+  # its state. LEAVE BLANK ⇒ "finops". Set a UNIQUE name (e.g. your company) if
+  # you ever DELETE + recreate the app — the new app gets a new identity that
+  # can't reuse the old one's schema, so a fresh name avoids a "permission denied"
+  # on acks. Ignored on the Delta fallback target.
   - name: FINOPS_LAKEBASE_SCHEMA
     value: ""
 

@@ -93,6 +93,9 @@ export interface AppConfig {
   app_short: string;
   mode: "demo" | "live";
   demo: boolean;
+  // Set when USE_LIVE was requested but the app fell back to demo because the
+  // warehouse / gold schema aren't configured yet — drives the "finish setup" banner.
+  live_setup_note?: string;
   customer: string;
   currencies?: CurrencyOption[];
   fx_aud?: number;

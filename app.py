@@ -35,7 +35,7 @@ FRONTEND_DIST = APP_ROOT / "frontend" / "dist"
 _SETTINGS = get_settings()
 _FEATURES = get_features()
 
-USE_LIVE = bool(_SETTINGS["use_live"])
+_USE_LIVE_REQUESTED = bool(_SETTINGS["use_live"])
 WAREHOUSE_ID = str(_SETTINGS.get("warehouse_id") or "")
 INGEST_SCHEMA = str(_SETTINGS.get("ingest_schema") or "")
 # Gold-table serving schema (nightly finops_gold_sync writes here). MANDATORY in
@@ -52,18 +52,28 @@ GOLD_SCHEMA = str(_SETTINGS.get("gold_schema") or "")
 # page then re-scans account-wide tables per request (slow); the two-tier cache
 # softens repeats but a cold/restarted process is very slow. Not for production.
 _ALLOW_LIVE_NO_GOLD = str(os.environ.get("FINOPS_ALLOW_LIVE_NO_GOLD") or "").lower() in ("1", "true", "yes")
-if USE_LIVE and not GOLD_SCHEMA and not _ALLOW_LIVE_NO_GOLD:
-    raise RuntimeError(
-        "LIVE MODE REQUIRES A GOLD SCHEMA. Set FINOPS_GOLD_SCHEMA (e.g. "
-        "main.finops_gold) so the nightly finops_gold_sync job can pre-aggregate "
-        "the account-wide system tables into fast serving tables — running the "
-        "app's reads live per request is not production-viable at real scale. "
-        "Grant the app/job service principal CREATE on the catalog (the job "
-        "auto-creates the schema + tables), or pre-create the schema and grant "
-        "CREATE+MODIFY on it, then unpause the finops_gold_sync job. "
-        "See docs/CUSTOMER_DEPLOYMENT.md. For a read-only eval with no writable "
-        "schema, set FINOPS_ALLOW_LIVE_NO_GOLD=true (slow; not for production)."
-    )
+# Live is the shipped default, but live mode needs a warehouse + a gold schema to
+# serve at real scale (account-wide system tables → not viable per-request). If a
+# deploy asks for live before those are set, DON'T hard-fail — fall back to demo so
+# the app always boots and shows something, and surface WHY on /api/config so the UI
+# shows a "finish setup to go live" banner. Setting FINOPS_ALLOW_LIVE_NO_GOLD=true
+# runs live off raw system tables without gold (slow; read-only evals only).
+_LIVE_SETUP_NOTE = ""
+if _USE_LIVE_REQUESTED and not WAREHOUSE_ID:
+    _LIVE_SETUP_NOTE = ("Live mode requested but no warehouse is set — showing demo data. "
+                        "Set DATABRICKS_WAREHOUSE_ID (a serverless SQL warehouse) + "
+                        "FINOPS_GOLD_SCHEMA in app.yaml, grant the app read access, and "
+                        "run finops_gold_sync once to go live.")
+elif _USE_LIVE_REQUESTED and not GOLD_SCHEMA and not _ALLOW_LIVE_NO_GOLD:
+    _LIVE_SETUP_NOTE = ("Live mode requested but no gold schema is set — showing demo data. "
+                        "Set FINOPS_GOLD_SCHEMA in app.yaml (the nightly finops_gold_sync job "
+                        "pre-aggregates the account-wide system tables into fast serving "
+                        "tables — running them live per request isn't viable at scale), grant "
+                        "the app/job SP CREATE on the catalog, and unpause finops_gold_sync. "
+                        "For a read-only eval with no writable schema, set "
+                        "FINOPS_ALLOW_LIVE_NO_GOLD=true (slow; not for production).")
+# Effective mode: live only when it can actually serve; otherwise demo (with the note).
+USE_LIVE = bool(_USE_LIVE_REQUESTED and not _LIVE_SETUP_NOTE)
 # Dual-currency (SPEC §9): list prices are USD; AUD = USD × FX. Configurable so
 # the rate can be pinned per deployment. Clearly labelled in the UI as an
 # indicative conversion applied to list-price USD, not a billed AUD figure.
@@ -580,6 +590,11 @@ def get_config() -> dict[str, Any]:
         "app_short": "Estate CC",
         "mode": "live" if USE_LIVE else "demo",
         "demo": not USE_LIVE,
+        # Set when live was REQUESTED (USE_LIVE=true) but the app fell back to demo
+        # because the warehouse/gold schema aren't configured yet — the UI shows a
+        # "finish setup to go live" banner instead of silently looking like demo was
+        # intended. Blank when the mode is what was asked for.
+        "live_setup_note": _LIVE_SETUP_NOTE,
         "customer": os.environ.get("FINOPS_CUSTOMER_NAME", "Acme Corp"),
         # Dual-currency toggle config (SPEC §9). USD is the source-of-truth list
         # price; AUD is an indicative conversion at this configurable FX rate.
