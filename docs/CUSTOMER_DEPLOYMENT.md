@@ -71,7 +71,8 @@ Click **Create**. The code lands at `/Workspace/Users/<you>/databricks-estate-co
 (where `<you>` is your own email). That's your copy — no download, no build.
 
 > [!NOTE]
-> The repo is private. If you can't see it, request access first.
+> The repo is public — no credentials needed to clone it. If your workspace can't reach
+> GitHub (locked-down networking), download the repo as a ZIP and import it instead.
 
 ---
 
