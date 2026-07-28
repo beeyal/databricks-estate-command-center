@@ -322,13 +322,20 @@ def preflight(warehouse_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Genie $ — the first fully-wired live endpoint (queries.sql Q1-Q3).
 # ---------------------------------------------------------------------------
-# PAID (billable) Genie usage per user × workspace × surface. Excludes the
-# GENIE_FREE_USAGE SKU (a free, un-priced SKU that started appearing 20 Jul 2026
-# — Databricks "Monitor and understand your Genie cost"): it carries DBUs but no
-# list price, so including it would inflate total_dbus while contributing $0.
-# Free usage is fetched separately by _GENIE_FREE_USAGE_SQL and surfaced as its
-# own "free absorbed" figure. Billed Genie usage lands under the regional
-# Serverless Real-Time Inference SKU (that's what list_prices prices).
+# Genie usage per user × workspace × surface, this month. INCLUDES the free tier
+# (GENIE_FREE_USAGE SKU, present from 20 Jul 2026 — Databricks "Monitor and
+# understand your Genie cost"). We deliberately include it: excluding it made
+# free-tier-heavy surfaces (Genie Agents, Genie Spaces — which for many estates
+# run almost entirely inside the 150 free DBUs/user allowance) show 0 DBUs and $0,
+# i.e. "nobody uses Agents", which is FALSE and misleads the operator. So:
+#   * total_dbus  = ALL Genie DBUs on the surface (real usage — the honest number)
+#   * billed_dbus = usage on the priced Serverless Real-Time Inference SKU only
+#   * free_dbus   = usage on the un-priced GENIE_FREE_USAGE SKU
+#   * billed_list = list $ of the billed rows (free rows have NO list_prices match,
+#                   so the LEFT JOIN yields NULL → contributes 0 automatically)
+# genie_cost_live values free_dbus at the estate's effective billed rate to get a
+# per-surface "list $"; the billed portion stays the actual charge (paid $). A
+# free-absorbed surface then reads: big DBUs, big list $, $0 billable — the truth.
 _GENIE_GROUND_TRUTH_SQL = """
 SELECT
   date_format(date_trunc('MONTH', u.usage_date), 'yyyy-MM')   AS usage_month,
@@ -336,7 +343,8 @@ SELECT
   COALESCE(u.identity_metadata.run_as, u.identity_metadata.created_by, 'shared') AS user_identity,
   COALESCE(u.usage_metadata.genie.surface, 'UNKNOWN')         AS surface,
   SUM(u.usage_quantity)                                       AS total_dbus,
-  SUM(u.usage_quantity * lp.pricing.effective_list.default)   AS total_list_cost
+  SUM(CASE WHEN u.sku_name = 'GENIE_FREE_USAGE' THEN u.usage_quantity ELSE 0 END) AS free_dbus,
+  SUM(u.usage_quantity * lp.pricing.effective_list.default)   AS billed_list
 FROM system.billing.usage u
 LEFT JOIN system.billing.list_prices lp
   ON u.cloud = lp.cloud
@@ -344,7 +352,6 @@ LEFT JOIN system.billing.list_prices lp
  AND u.usage_start_time >= lp.price_start_time
  AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
 WHERE u.billing_origin_product = 'GENIE'
-  AND u.sku_name <> 'GENIE_FREE_USAGE'
   AND u.usage_date >= date_trunc('MONTH', current_date())
 GROUP BY 1, 2, 3, 4
 """
@@ -360,59 +367,23 @@ SELECT
   COALESCE(u.identity_metadata.run_as, u.identity_metadata.created_by, 'shared') AS user_identity,
   'UNKNOWN'                                                   AS surface,
   SUM(u.usage_quantity)                                       AS total_dbus,
-  SUM(u.usage_quantity * lp.pricing.effective_list.default)   AS total_list_cost
+  SUM(CASE WHEN u.sku_name = 'GENIE_FREE_USAGE' THEN u.usage_quantity ELSE 0 END) AS free_dbus,
+  SUM(u.usage_quantity * lp.pricing.effective_list.default)   AS billed_list
 FROM system.billing.usage u
 LEFT JOIN system.billing.list_prices lp
   ON u.cloud = lp.cloud AND u.sku_name = lp.sku_name
  AND u.usage_start_time >= lp.price_start_time
  AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
 WHERE u.billing_origin_product = 'GENIE'
-  AND u.sku_name <> 'GENIE_FREE_USAGE'
   AND u.usage_date >= date_trunc('MONTH', current_date())
 GROUP BY 1, 2, 3, 4
 """
 
 
-# FREE Genie usage — the GENIE_FREE_USAGE SKU (present from 20 Jul 2026; free
-# usage before that date isn't in system tables). It has NO list_prices row, so
-# we value the free DBUs at the estate's effective BILLED Genie rate this month
-# (Σ billed list $ / Σ billed DBUs over the priced Serverless Real-Time
-# Inference rows) — a real, derived rate, not a hardcoded one. That gives an
-# honest "what the free usage would have cost at list" figure. Falls back to the
-# canonical proxy only if there are no billed rows to derive a rate from.
-_GENIE_FREE_USAGE_SQL = """
-WITH billed AS (
-  SELECT
-    SUM(u.usage_quantity) AS billed_dbus,
-    SUM(u.usage_quantity * lp.pricing.effective_list.default) AS billed_list
-  FROM system.billing.usage u
-  LEFT JOIN system.billing.list_prices lp
-    ON u.cloud = lp.cloud AND u.sku_name = lp.sku_name
-   AND u.usage_start_time >= lp.price_start_time
-   AND (lp.price_end_time IS NULL OR u.usage_start_time < lp.price_end_time)
-  WHERE u.billing_origin_product = 'GENIE'
-    AND u.sku_name <> 'GENIE_FREE_USAGE'
-    AND u.usage_date >= date_trunc('MONTH', current_date())
-),
-free AS (
-  SELECT
-    date_format(date_trunc('MONTH', u.usage_date), 'yyyy-MM') AS usage_month,
-    COUNT(DISTINCT COALESCE(u.identity_metadata.run_as, u.identity_metadata.created_by, 'shared')) AS free_users,
-    SUM(u.usage_quantity) AS free_dbus
-  FROM system.billing.usage u
-  WHERE u.billing_origin_product = 'GENIE'
-    AND u.sku_name = 'GENIE_FREE_USAGE'
-    AND u.usage_date >= date_trunc('MONTH', current_date())
-  GROUP BY 1
-)
-SELECT
-  free.usage_month,
-  free.free_users,
-  free.free_dbus,
-  (SELECT billed_dbus FROM billed) AS billed_dbus,
-  (SELECT billed_list FROM billed) AS billed_list
-FROM free
-"""
+# NB: free-tier absorbed usage used to be a separate query (_GENIE_FREE_USAGE_SQL)
+# that excluded the free SKU from the main breakdown. That's now folded into
+# _GENIE_GROUND_TRUTH_SQL (free_dbus column) so free-absorbed surfaces show real
+# usage instead of $0 — genie_cost_live derives free_absorbed_usd from those rows.
 
 
 def genie_cost_live(warehouse_id: str, workspace: str | None = None) -> dict[str, Any]:
@@ -432,11 +403,32 @@ def genie_cost_live(warehouse_id: str, workspace: str | None = None) -> dict[str
     # Workspaces drill-down — which scopes by the workspace NAME — matches nothing
     # and shows a false "$0 / no billable Genie spend" (fail-soft to {} → id kept).
     ws_names = _workspace_names(warehouse_id)
+    # Effective billed Genie rate this month ($/DBU) = Σ billed list $ / Σ billed
+    # DBUs (billed = total − free). Used to value the free DBUs on each surface so
+    # a free-absorbed surface still shows a real "list $" (what it WOULD cost),
+    # while its billable $ stays 0. Falls back to the generic proxy if there are no
+    # billed rows to derive a rate from (flagged so the UI labels it as a proxy).
+    _sum_total = sum(_f(r.get("total_dbus")) for r in raw)
+    _sum_free = sum(_f(r.get("free_dbus")) for r in raw)
+    _sum_billed_list = sum(_f(r.get("billed_list")) for r in raw)
+    _billed_dbus_all = _sum_total - _sum_free
+    if _billed_dbus_all > 0:
+        eff_rate = _sum_billed_list / _billed_dbus_all
+        rate_is_proxy = False
+    else:
+        eff_rate = DBU_HOUR_PROXY_USD
+        rate_is_proxy = True
     gt_rows: list[dict[str, Any]] = []
     for r in raw:
         surface = str(r.get("surface") or "UNKNOWN")
         month = str(r.get("usage_month") or "")
         ws_id = str(r.get("workspace") or "")
+        total_dbus = _f(r.get("total_dbus"))
+        free_dbus = _f(r.get("free_dbus"))
+        billed_list = _f(r.get("billed_list"))          # actual charge (paid)
+        # List value of ALL usage on this surface: the billed rows' real list $
+        # plus the free rows valued at the effective billed rate.
+        total_list = billed_list + free_dbus * eff_rate
         gt_rows.append({
             "usage_month": month,
             "workspace": ws_names.get(ws_id, ws_id),
@@ -444,41 +436,26 @@ def genie_cost_live(warehouse_id: str, workspace: str | None = None) -> dict[str
             "user_identity": str(r.get("user_identity") or ""),
             "surface": surface,
             "label": genie_cost.surface_label(surface),
-            "total_dbus": round(_f(r.get("total_dbus")), 1),
-            "total_list_cost_usd": round(_f(r.get("total_list_cost")), 2),
+            "total_dbus": round(total_dbus, 1),
+            "total_list_cost_usd": round(total_list, 2),
+            # Billed (paid) portion — carried explicitly so the assembler doesn't
+            # assume paid == total (which was true only while we excluded free).
+            "billed_dbus": round(total_dbus - free_dbus, 1),
+            "billed_list_cost_usd": round(billed_list, 2),
         })
-    # Free usage (GENIE_FREE_USAGE SKU, from 20 Jul 2026) — now visible in system
-    # tables, so we CAN surface a real "free absorbed" figure. GENIE_FREE_USAGE
-    # has no list price, so value its DBUs at the estate's effective billed Genie
-    # rate this month (Σ billed list $ / Σ billed DBUs). None if the SKU isn't
-    # present yet (pre-20-Jul estate / no free usage) → the UI shows "n/a" rather
-    # than a fabricated 0. This is best-effort: a failure never breaks the tab.
-    free_absorbed_usd: float | None = None
-    free_dbus_total: float | None = None
-    free_rate_is_proxy = False
-    try:
-        fr = _run(warehouse_id, _GENIE_FREE_USAGE_SQL, "system.billing.usage (Genie free)")
-        if fr:
-            free_dbus_total = round(_f(fr[0].get("free_dbus")), 1)
-            billed_dbus = _f(fr[0].get("billed_dbus"))
-            billed_list = _f(fr[0].get("billed_list"))
-            # Value the free DBUs at THIS estate's effective billed Genie rate when
-            # there's billed usage to derive it from; otherwise fall back to the
-            # generic list-price proxy — and FLAG that so the UI doesn't claim it's
-            # the "effective billed rate" when no billed rows exist.
-            if billed_dbus > 0:
-                rate = billed_list / billed_dbus
-            else:
-                rate = DBU_HOUR_PROXY_USD
-                free_rate_is_proxy = True
-            free_absorbed_usd = round(free_dbus_total * rate, 2)
-    except LiveError:
-        free_absorbed_usd = None
+    # Free absorbed (GENIE_FREE_USAGE SKU, from 20 Jul 2026) — derived directly
+    # from the rows we already fetched (no second query needed): the free DBUs
+    # valued at the effective billed rate. None if there was no free usage this
+    # month (pre-20-Jul estate) → the UI shows "n/a", not a fabricated 0.
+    free_dbus_total: float | None = round(_sum_free, 1) if _sum_free > 0 else None
+    free_absorbed_usd: float | None = (
+        round(_sum_free * eff_rate, 2) if _sum_free > 0 else None)
+    free_rate_is_proxy = rate_is_proxy and _sum_free > 0
 
-    # billable_input=True: the PAID billing.usage Genie rows ARE the charge (above
-    # the free allowance), so we don't re-apply a free split to them. free_absorbed
-    # is now a REAL figure from the GENIE_FREE_USAGE SKU (see above), passed
-    # through rather than left null.
+    # billable_input=True: rows carry explicit billed_* fields (the charge above
+    # the free allowance), so the assembler uses those for paid $ rather than
+    # assuming paid == total (which stopped being true once we folded the free
+    # tier into total_dbus/total_list to fix the "Agents/Spaces = $0" bug).
     return genie_cost.assemble(gt_rows, workspace, billable_input=True,
                                free_absorbed_usd=free_absorbed_usd,
                                free_dbus_total=free_dbus_total,
@@ -651,10 +628,20 @@ def cost_drivers_live(warehouse_id: str, workspace: str | None = None) -> dict[s
         last = pts[-1]["spend_usd"] if pts else 0
         prev = pts[-2]["spend_usd"] if len(pts) >= 2 else 0
         series.append({"driver": code, "label": _plabel(code), "points": pts, "spend_usd_month": last})
+        # mom_pct: a genuinely NEW driver (prev=$0, last>$0) is infinite growth, not
+        # 0% — reporting 0 hid the fastest-growing spend from the top-movers sort.
+        # Flag it with is_new + a sentinel high pct so it ranks at the top (where a
+        # brand-new cost spike belongs), and let the UI badge it as "new" rather
+        # than print a nonsensical percentage.
+        is_new = prev <= 0 and last > 0
         mom.append({"driver": code, "label": _plabel(code), "prev_usd_month": prev, "spend_usd_month": last,
-                    "mom_pct": round(((last - prev) / prev) if prev else 0.0, 4), "delta_usd": last - prev})
+                    "mom_pct": (round((last - prev) / prev, 4) if prev > 0 else None),
+                    "is_new": is_new, "delta_usd": last - prev})
     series.sort(key=lambda s: -s["spend_usd_month"])
-    mom.sort(key=lambda m: -m["mom_pct"])
+    # Sort by absolute $ delta desc so both new drivers (mom_pct=None) and existing
+    # ones rank by real movement — a new $10k driver beats a +5% on $2k. (Sorting
+    # by mom_pct alone dropped new drivers to the bottom because their pct was 0.)
+    mom.sort(key=lambda m: -m["delta_usd"])
 
     return {
         "workspace": scoped or "all",
@@ -1177,17 +1164,29 @@ def _overview_summary_extras(warehouse_id: str, total_spend: float, cost_drivers
     #     already-computed cost_drivers MoM list; deep-link to Overview's own
     #     driver chart (stays here). Only add if a real positive spike exists.
     try:
-        # cost_drivers_live emits each MoM entry with key "mom_pct" (a fraction).
+        # cost_drivers_live emits each MoM entry with mom_pct (a fraction, or None
+        # for a NEW driver = infinite growth) + is_new + delta_usd. Rank by $ delta
+        # so a brand-new material driver surfaces as the top spike (sorting by
+        # mom_pct alone buried new drivers, whose pct is None/0).
         mom_drivers = sorted((cost_drivers or {}).get("mom", []),
-                             key=lambda d: -_f(d.get("mom_pct")))
+                             key=lambda d: -_f(d.get("delta_usd")))
         if mom_drivers:
             top = mom_drivers[0]
-            pct = _f(top.get("mom_pct"))
-            if pct >= 0.15:  # only flag a material rise
+            pct = top.get("mom_pct")   # None for a new driver
+            is_new = bool(top.get("is_new"))
+            delta = _f(top.get("delta_usd"))
+            # Flag a new driver with material spend, OR an existing one up >=15%.
+            material_new = is_new and delta >= 500.0
+            material_rise = pct is not None and pct >= 0.15
+            if material_new or material_rise:
+                label = top.get("label") or top.get("driver")
+                title = (f"{label} is a new cost driver this month"
+                         if is_new else
+                         f"{label} spend up {round(_f(pct)*100)}% MoM")
                 extras.setdefault("needs_attention", [])
                 extras["needs_attention"].insert(0, {
                     "kind": "spend-spike",
-                    "title": f"{top.get('label') or top.get('driver')} spend up {round(pct*100)}% MoM",
+                    "title": title,
                     "detail": "Fastest-growing cost driver this month",
                     "est_savings_usd_month": 0,
                     "tab": "overview",

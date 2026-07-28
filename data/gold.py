@@ -312,12 +312,15 @@ def build_cluster_daily(warehouse_id: str, gold_schema: str) -> dict[str, Any]:
     fqn = f"{gold_schema}.finops_gold_cluster_daily"
     _ensure_managed_delta(warehouse_id, fqn,
         "usage_date DATE, cluster_id STRING, cpu_sum DOUBLE, mem_sum DOUBLE, "
-        "idle_samples BIGINT, samples BIGINT, dbus DOUBLE")
+        "idle_samples BIGINT, samples BIGINT, uptime_min BIGINT, dbus DOUBLE")
     live._run(warehouse_id,
         f"DELETE FROM {fqn} WHERE usage_date >= dateadd(day,-{_ACCUM_REFRESH_DAYS},current_date())",
         "clear cluster_daily window")
     # Utilisation from node_timeline: store SUMs + sample counts so the reader can
-    # form correct mean CPU/mem and idle-fraction over any window.
+    # form correct mean CPU/mem and idle-fraction over any window. uptime_min =
+    # DISTINCT minutes with >=1 active node that day (size-independent wall-clock
+    # uptime — one node_timeline row per node per minute, so COUNT(*) overcounts
+    # multi-node clusters; the reader sums uptime_min across days).
     live._run(warehouse_id,
         f"INSERT INTO {fqn} "
         "SELECT CAST(nt.start_time AS DATE) usage_date, nt.cluster_id, "
@@ -325,6 +328,7 @@ def build_cluster_daily(warehouse_id: str, gold_schema: str) -> dict[str, Any]:
         "SUM(nt.mem_used_percent)/100.0 mem_sum, "
         f"SUM(CASE WHEN (nt.cpu_user_percent+nt.cpu_system_percent) < {idle_pct} THEN 1 ELSE 0 END) idle_samples, "
         "COUNT(*) samples, "
+        "COUNT(DISTINCT nt.start_time) uptime_min, "
         "COALESCE(MAX(c.dbus),0) dbus "
         "FROM system.compute.node_timeline nt "
         "LEFT JOIN (SELECT usage_metadata.cluster_id cid, CAST(usage_start_time AS DATE) d, "

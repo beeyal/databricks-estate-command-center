@@ -64,6 +64,7 @@ export function UnifiedAckBar({
   const [note, setNote] = useState("");
   const [snooze, setSnooze] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstPresetRef = useRef<HTMLButtonElement>(null);
@@ -84,7 +85,7 @@ export function UnifiedAckBar({
   useEffect(() => { if (numOpen === 0) setOpen(false); }, [numOpen]);
 
   async function apply(ackStatus: AckStatus, reason: string) {
-    setBusy(true);
+    setBusy(true); setErr("");
     try {
       await Promise.all(
         items.filter((i) => !i.acked).map((it) =>
@@ -98,16 +99,20 @@ export function UnifiedAckBar({
       );
       setOpen(false); setNote(""); setSnooze(null);
       onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not save — please retry.");
     } finally {
       setBusy(false);
     }
   }
 
   async function reopen() {
-    setBusy(true);
+    setBusy(true); setErr("");
     try {
       await Promise.all(items.filter((i) => i.acked).map((it) => deleteAck(source, it.entityKey)));
       onDone();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not reopen — please retry.");
     } finally {
       setBusy(false);
     }
@@ -160,6 +165,7 @@ export function UnifiedAckBar({
         ) : (
           <span className="text-neutral/70">Select rows to acknowledge →</span>
         )}
+        {err && <span role="alert" className="text-[11px] text-danger" title={err}>{err}</span>}
       </span>
 
       {/* Action group pushed right on wide screens */}

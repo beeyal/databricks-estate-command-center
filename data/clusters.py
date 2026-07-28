@@ -265,7 +265,12 @@ def clusters_live(warehouse_id: str, days: int = 30) -> dict[str, Any]:
             "         AVG(mem_used_percent)/100.0 mem, "
             # idle threshold ties to IDLE_CPU_LOW (the finding uses the same cut)
             f"         SUM(CASE WHEN (cpu_user_percent+cpu_system_percent) < {int(IDLE_CPU_LOW * 100)} THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) idle, "
-            "         COUNT(*) samples "  # >0 ⇒ real telemetry (distinguishes true 0% CPU from no data)
+            "         COUNT(*) samples, "  # >0 ⇒ real telemetry (distinguishes true 0% CPU from no data)
+            # Wall-clock uptime = DISTINCT minutes with >=1 active node (one row per
+            # node per minute). COUNT(DISTINCT start_time) is size-independent — the
+            # old samples/(wmax+1) assumed the cluster always ran at MAX workers, so
+            # an autoscaling cluster that mostly ran small was under-reported ~Nx.
+            "         COUNT(DISTINCT start_time) uptime_min "
             "  FROM system.compute.node_timeline "
             f"  WHERE start_time>=dateadd(day,-{days},current_date()) "
             "  AND start_time < current_date() "  # exclude incomplete current day
@@ -278,7 +283,7 @@ def clusters_live(warehouse_id: str, days: int = 30) -> dict[str, Any]:
             "  AND usage_metadata.cluster_id IS NOT NULL GROUP BY usage_metadata.cluster_id"
             ") "
             "SELECT cfg.cluster_id cid, cfg.name, cfg.node, cfg.wmin, cfg.wmax, cfg.autoscale, cfg.auto_stop, "
-            "cfg.dbr, cfg.creator, cfg.ws, util.cpu, util.mem, util.idle, util.samples, cost.dbus "
+            "cfg.dbr, cfg.creator, cfg.ws, util.cpu, util.mem, util.idle, util.samples, util.uptime_min, cost.dbus "
             "FROM cfg LEFT JOIN util ON cfg.cluster_id=util.cluster_id "
             "LEFT JOIN cost ON cfg.cluster_id=cost.cid "
             "ORDER BY cost.dbus DESC NULLS LAST LIMIT 200",
@@ -300,12 +305,12 @@ def clusters_live(warehouse_id: str, days: int = 30) -> dict[str, Any]:
         wmax = int(live._f(r.get("wmax")))
         dbus = live._f(r.get("dbus"))
         ws = str(r.get("ws") or "")
-        # node_timeline is one sample per NODE per minute → samples/60/(workers+1)
-        # approximates wall-clock uptime hours (was hardcoded 0). samples>0 also
-        # tells findings that utilisation is REAL (vs a LEFT JOIN miss → 0.0).
+        # Wall-clock uptime = DISTINCT minutes with >=1 active node / 60 (size-
+        # independent — correct for autoscaling clusters). samples>0 also tells
+        # findings that utilisation is REAL (vs a LEFT JOIN miss → 0.0).
         samples = live._f(r.get("samples"))
         util_known = samples > 0
-        uptime_h = round(samples / 60.0 / max(1, wmax + 1)) if samples else 0
+        uptime_h = round(live._f(r.get("uptime_min")) / 60.0) if samples else 0
         out.append(_assemble({
             "cluster": str(r.get("name") or ""), "cluster_id": str(r.get("cid") or ""),
             "purpose": "", "node_type": str(r.get("node") or ""),
@@ -363,7 +368,8 @@ def clusters_from_daily(warehouse_id: str, gold_schema: str, days: int = 30) -> 
             warehouse_id,
             "SELECT cluster_id cid, SUM(cpu_sum)/NULLIF(SUM(samples),0) cpu, "
             "SUM(mem_sum)/NULLIF(SUM(samples),0) mem, "
-            "SUM(idle_samples)/NULLIF(SUM(samples),0) idle, SUM(dbus) dbus, SUM(samples) samples "
+            "SUM(idle_samples)/NULLIF(SUM(samples),0) idle, SUM(dbus) dbus, SUM(samples) samples, "
+            "SUM(uptime_min) uptime_min "
             f"FROM {fqn} WHERE usage_date >= dateadd(day,-{max(1, days)},current_date()) "
             "GROUP BY cluster_id ORDER BY dbus DESC NULLS LAST LIMIT 200",
             "gold cluster_daily (re-window)",
@@ -395,11 +401,12 @@ def clusters_from_daily(warehouse_id: str, gold_schema: str, days: int = 30) -> 
             continue  # not an interactive (UI/API) cluster → not in scope for this tab
         dbus = live._f(u.get("dbus"))
         ws = str(r.get("ws") or "")
-        # node_timeline is one sample per NODE per minute; dividing by max(workers,1)
-        # approximates wall-clock cluster uptime hours. Rough but useful (was 0).
+        # Wall-clock uptime = DISTINCT active minutes / 60 (from gold uptime_min,
+        # size-independent). The old samples/(wmax+1) assumed the cluster always ran
+        # at MAX workers, under-reporting autoscaling clusters by ~Nx.
         samples = live._f(u.get("samples"))
         wmax = int(live._f(r.get("wmax")))
-        uptime_h = round(samples / 60.0 / max(1, wmax + 1)) if samples else 0
+        uptime_h = round(live._f(u.get("uptime_min")) / 60.0) if samples else 0
         out.append(_assemble({
             "cluster": str(r.get("name") or ""), "cluster_id": cid,
             "purpose": "", "node_type": str(r.get("node") or ""),

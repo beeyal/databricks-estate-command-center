@@ -64,6 +64,15 @@ env:
   # Blank ⇒ falls back to FINOPS_GOLD_SCHEMA. Set one of them for live writeback.
   - name: FINOPS_WRITEBACK_SCHEMA
     value: ""
+  # Postgres SCHEMA name for the Lakebase writeback backend (customer-lakebase
+  # target). Blank ⇒ "finops". The app's service principal OWNS this schema (it's
+  # auto-created on first write), so it must be UNIQUE to this app: if you ever
+  # DELETE + recreate the app, its NEW service principal cannot use the OLD SP's
+  # schema (Postgres "permission denied for schema finops"), which makes every
+  # acknowledge silently fail. On a recreate, set a fresh name here (e.g. "estate")
+  # so the new SP creates + owns its own schema. Ignored by the Delta backend.
+  - name: FINOPS_LAKEBASE_SCHEMA
+    value: ""
 
   # Genie Space curated over cost/usage tables. Blank ⇒ demo mode returns canned
   # streamed answers grounded in the demo data.

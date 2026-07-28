@@ -465,7 +465,10 @@ def _driver_trend(driver_spend: dict[str, float], seed_key: str) -> dict[str, An
         pts = list(reversed([round(x) for x in back]))
         prev_m = pts[-2] if len(pts) >= 2 else 0
         last_m = pts[-1]
-        mom_pct = ((last_m - prev_m) / prev_m) if prev_m > 0 else 0.0
+        # Match the live shape (data/live.py cost_drivers_live): a NEW driver
+        # (prev $0 → spend this month) gets mom_pct=None + is_new=True so it's
+        # not misreported as 0% growth; ranking is by $ delta.
+        is_new = prev_m <= 0 and last_m > 0
         series.append({
             "driver": drv,
             "label": _DRIVER_INDEX.get(drv, {}).get("label", drv),
@@ -477,11 +480,12 @@ def _driver_trend(driver_spend: dict[str, float], seed_key: str) -> dict[str, An
             "label": _DRIVER_INDEX.get(drv, {}).get("label", drv),
             "prev_usd_month": prev_m,
             "spend_usd_month": last_m,
-            "mom_pct": round(mom_pct, 4),
+            "mom_pct": round((last_m - prev_m) / prev_m, 4) if prev_m > 0 else None,
+            "is_new": is_new,
             "delta_usd": last_m - prev_m,
         })
     series.sort(key=lambda s: -s["spend_usd_month"])
-    mom.sort(key=lambda m: -m["mom_pct"])
+    mom.sort(key=lambda m: -m["delta_usd"])
     return {"months": months, "series": series, "mom": mom}
 
 
@@ -1741,17 +1745,23 @@ def _overview(workspaces: list[dict[str, Any]]) -> dict[str, Any]:
         for o in top[:3] if o["est_savings_usd_month"] > 0
     ]
     cd = _cost_driver_estate()
-    # The cost-driver MoM entries key the fraction as "mom_pct" (see
-    # _cost_driver_estate) — NOT "mom". Reading "mom" made this spike item dead
-    # (gate never cleared) and would KeyError if it had. Use mom_pct.
-    mom_list = sorted(cd.get("mom", []), key=lambda d: -(d.get("mom_pct", 0)))
-    if mom_list and mom_list[0].get("mom_pct", 0) >= 0.15:
+    # Cost-driver MoM entries carry mom_pct (fraction, or None for a NEW driver) +
+    # is_new + delta_usd (see _cost_driver_estate). Rank by $ delta so a new driver
+    # (mom_pct=None) can surface; guard the None before formatting a percentage.
+    mom_list = sorted(cd.get("mom", []), key=lambda d: -(d.get("delta_usd") or 0))
+    if mom_list:
         d0 = mom_list[0]
-        attention.insert(0, {
-            "kind": "spend-spike",
-            "title": f"{d0.get('label') or d0.get('driver')} spend up {round(d0['mom_pct']*100)}% MoM",
-            "detail": "Fastest-growing cost driver this month",
-            "est_savings_usd_month": 0, "tab": "overview"})
+        pct0 = d0.get("mom_pct")
+        is_new0 = bool(d0.get("is_new"))
+        if (is_new0 and (d0.get("delta_usd") or 0) >= 500) or (pct0 is not None and pct0 >= 0.15):
+            label0 = d0.get("label") or d0.get("driver")
+            title0 = (f"{label0} is a new cost driver this month" if is_new0
+                      else f"{label0} spend up {round(pct0 * 100)}% MoM")
+            attention.insert(0, {
+                "kind": "spend-spike",
+                "title": title0,
+                "detail": "Fastest-growing cost driver this month",
+                "est_savings_usd_month": 0, "tab": "overview"})
     return {
         "total_spend_usd_month": total_spend,
         "total_savings_usd_month": total_savings,

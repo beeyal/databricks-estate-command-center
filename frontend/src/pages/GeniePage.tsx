@@ -293,9 +293,13 @@ export function GeniePage() {
             </div>
             <div className="flex flex-col gap-2.5">
               {roll.surfaces.map((s) => {
-                // In live/billable mode s.list === s.paid; the solid bar is the
-                // full billable spend and there's no free portion to show.
-                const amount = billable ? s.paid : s.list;
+                // Bar sized to TOTAL list value (real usage on the surface), split
+                // solid = billable ($ above the free allowance), faded = free
+                // absorbed. This is the fix for the "Agents/Spaces = $0" bug: a
+                // free-tier-heavy surface (e.g. Agents run inside the 150 free
+                // DBUs) now shows its real magnitude with the free portion faded,
+                // instead of a zero-width bar. Works in both live and demo (live
+                // free = list − billable, from the GENIE_FREE_USAGE SKU).
                 const free = Math.max(0, s.list - s.paid);
                 return (
                   <div key={s.surface} className="flex flex-col gap-1">
@@ -307,20 +311,14 @@ export function GeniePage() {
                       </span>
                       <span className="tabular-nums text-neutral">
                         {billable
-                          ? <>{fmtMoney(s.paid, cur, { compact: true })} billable · {fmtPct(s.paid / (roll.paid || 1), 1)}</>
+                          ? <>{fmtMoney(s.paid, cur, { compact: true })} billable{free > 0 ? <> · {fmtMoney(free, cur, { compact: true })} free</> : null} · {fmtPct(s.list / (roll.list || 1), 1)}</>
                           : <>{fmtMoney(s.list, cur, { compact: true })} · paid {fmtMoney(s.paid, cur, { compact: true })} · free {fmtMoney(free, cur, { compact: true })} · {fmtPct(s.list / (roll.list || 1), 1)}</>}
                       </span>
                     </div>
-                    {/* Bar scaled to the biggest surface. In demo: solid = paid, faded = free. In live: solid = full billable spend. */}
-                    <div className="h-1.5 rounded-full bg-border/60 overflow-hidden flex" style={{ width: `${(amount / maxSurface) * 100}%` }}>
-                      {billable ? (
-                        <div className={`h-full ${surfaceStyle(s.surface).bar}`} style={{ width: "100%" }} title={`Billable ${fmtMoney(s.paid, cur)}`} />
-                      ) : (
-                        <>
-                          <div className={`h-full ${surfaceStyle(s.surface).bar}`} style={{ width: `${s.list ? (s.paid / s.list) * 100 : 0}%` }} title={`Paid ${fmtMoney(s.paid, cur)}`} />
-                          <div className={`h-full ${surfaceStyle(s.surface).bar} opacity-30`} style={{ width: `${s.list ? (free / s.list) * 100 : 0}%` }} title={`Free ${fmtMoney(free, cur)}`} />
-                        </>
-                      )}
+                    {/* Bar scaled to the biggest surface (by total list value). Solid = billable, faded = free absorbed. */}
+                    <div className="h-1.5 rounded-full bg-border/60 overflow-hidden flex" style={{ width: `${(s.list / maxSurface) * 100}%` }}>
+                      <div className={`h-full ${surfaceStyle(s.surface).bar}`} style={{ width: `${s.list ? (s.paid / s.list) * 100 : 0}%` }} title={`Billable ${fmtMoney(s.paid, cur)}`} />
+                      <div className={`h-full ${surfaceStyle(s.surface).bar} opacity-30`} style={{ width: `${s.list ? (free / s.list) * 100 : 0}%` }} title={`Free ${fmtMoney(free, cur)}`} />
                     </div>
                   </div>
                 );

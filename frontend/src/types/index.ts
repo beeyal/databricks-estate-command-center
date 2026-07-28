@@ -263,7 +263,10 @@ export interface DriverMoM {
   label: string;
   prev_usd_month: number;
   spend_usd_month: number;
-  mom_pct: number;
+  /** Fraction change vs prior month. null for a NEW driver (prev $0 = infinite growth). */
+  mom_pct: number | null;
+  /** True when this driver had $0 last month and spend this month (new cost). */
+  is_new?: boolean;
   delta_usd: number;
 }
 

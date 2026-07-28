@@ -85,8 +85,27 @@ def operational() -> tuple[bool, str]:
         b = _backend()
     except Exception as e:  # noqa: BLE001
         return (False, f"backend unavailable: {e}")
-    if b in ("demo", "lakebase"):
+    if b == "demo":
         return (True, "")
+    if b == "lakebase":
+        # Don't just trust the flag — actually PROBE the connection + schema DDL.
+        # The recreated-app trap: a new app SP inherits neither the old SP's
+        # Postgres schema ownership nor grants, so put_ack() fails with
+        # "permission denied for schema <x>" even though the backend is "selected".
+        # Reporting operational=true here made /api/config claim writeback works
+        # while every ack silently 503'd (the controls showed but never persisted).
+        # A real ensure-schema probe surfaces that as writeback OFF with the reason,
+        # so the UI hides the controls instead of lying. Best-effort + cheap: the
+        # DDL is idempotent and short-circuited by _lakebase_ensured after the first
+        # success, so this is a one-time cost per process.
+        try:
+            with _lakebase_conn() as c, c.cursor() as cur:
+                _lakebase_ensure(cur)
+                c.commit()
+            return (True, "")
+        except Exception as e:  # noqa: BLE001
+            _reset_lakebase_ensured()
+            return (False, f"lakebase writeback unavailable: {str(e)[:180]}")
     # delta backend: needs a valid writeback schema to create the ack table in.
     from data import live
     schema = os.environ.get("FINOPS_WRITEBACK_SCHEMA") or config.get_settings().get("gold_schema") or ""

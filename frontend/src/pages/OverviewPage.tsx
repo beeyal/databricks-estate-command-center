@@ -107,12 +107,12 @@ export function OverviewPage() {
 
           {/* Cost by cost-driver (product) + top-5 monthly trend — SPEC §9 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <DriverBar drivers={data.data.cost_drivers.drivers} />
-            <DriverTrendChart trend={data.data.cost_drivers.trend} />
+            <DriverBar drivers={data.data.cost_drivers?.drivers ?? []} />
+            <DriverTrendChart trend={data.data.cost_drivers?.trend ?? { months: [], series: [] }} />
           </div>
 
           {/* Driver change vs prior 30 days (%) — spike detection — SPEC §9 */}
-          <MoMChangeBar mom={data.data.cost_drivers.mom} />
+          <MoMChangeBar mom={data.data.cost_drivers?.mom ?? []} />
 
           <div className="card">
             <div className="flex items-baseline justify-between mb-3">

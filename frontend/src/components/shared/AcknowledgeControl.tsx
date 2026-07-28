@@ -56,6 +56,7 @@ export function AcknowledgeControl({
   const [note, setNote] = useState("");
   const [snooze, setSnooze] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstPresetRef = useRef<HTMLButtonElement>(null);
@@ -80,7 +81,7 @@ export function AcknowledgeControl({
   const acked = currentStatus !== "open";
 
   async function apply(status: AckStatus, reason: string) {
-    setBusy(true);
+    setBusy(true); setErr("");
     try {
       await postAck({
         source, entity_key: entityKey, status,
@@ -90,17 +91,23 @@ export function AcknowledgeControl({
       });
       setOpen(false); setNote(""); setSnooze(null);
       onChanged?.();
+    } catch (e) {
+      // Surface the failure instead of closing the popover as if it worked — a
+      // silently-swallowed 503 was why "the acknowledge buttons don't work".
+      setErr(e instanceof Error ? e.message : "Could not save — please retry.");
     } finally {
       setBusy(false);
     }
   }
 
   async function reopen() {
-    setBusy(true);
+    setBusy(true); setErr("");
     try {
       await deleteAck(source, entityKey);
       setOpen(false);
       onChanged?.();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not reopen — please retry.");
     } finally {
       setBusy(false);
     }
@@ -116,6 +123,7 @@ export function AcknowledgeControl({
           className="text-[11px] text-neutral hover:text-brand-dark underline decoration-dotted">
           Reopen
         </button>
+        {err && <span className="text-[10px] text-danger" title={err}>· couldn’t reopen</span>}
       </span>
     );
   }
@@ -183,6 +191,11 @@ export function AcknowledgeControl({
             ))}
             {snooze && <span className="text-neutral">· reopens after {snooze}d</span>}
           </div>
+          {err && (
+            <p role="alert" className="text-[11px] text-danger border-t border-border pt-2">
+              {err}
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -182,8 +182,19 @@ export function MoMChangeBar({
   const cur = useCurrency();
   // Show every active driver, biggest movers first — no truncation, so labels
   // like Vector Search are never dropped off the axis.
-  const rows = [...mom].filter((m) => m.spend_usd_month > 0).sort((a, b) => b.mom_pct - a.mom_pct);
-  const data = rows.map((m) => ({ ...m, pct: Math.round(m.mom_pct * 100) }));
+  // A NEW driver (prev $0 → spend this month) has mom_pct=null (infinite growth);
+  // show it as a capped +100% spike bar and badge it "new" in the label, rather
+  // than dropping it or printing NaN. Sort by $ delta so new/large movers rank up.
+  const NEW_PCT = 100;
+  const rows = [...mom]
+    .filter((m) => m.spend_usd_month > 0)
+    .sort((a, b) => (b.delta_usd ?? 0) - (a.delta_usd ?? 0));
+  const data = rows.map((m) => ({
+    ...m,
+    pct: m.mom_pct == null ? NEW_PCT : Math.round(m.mom_pct * 100),
+    isNew: m.mom_pct == null || m.is_new === true,
+    label: (m.mom_pct == null || m.is_new === true) ? `${m.label} (new)` : m.label,
+  }));
   return (
     <div className="rounded-lg border border-border bg-surface/30 p-4">
       <div className="flex items-baseline justify-between mb-2">
@@ -201,8 +212,10 @@ export function MoMChangeBar({
           <Tooltip
             contentStyle={tooltipStyle}
             labelStyle={{ color: "rgb(var(--color-brand-dark))" }}
-            formatter={(v: number, _n, p: { payload?: DriverMoM }) => [
-              `${v > 0 ? "+" : ""}${v}% MoM · ${fmtMoney((p.payload?.delta_usd ?? 0), cur)} Δ`,
+            formatter={(v: number, _n, p: { payload?: DriverMoM & { isNew?: boolean } }) => [
+              p.payload?.isNew
+                ? `NEW this period · ${fmtMoney((p.payload?.delta_usd ?? 0), cur)}`
+                : `${v > 0 ? "+" : ""}${v}% MoM · ${fmtMoney((p.payload?.delta_usd ?? 0), cur)} Δ`,
               "change vs prior 30d",
             ]}
           />

@@ -54,6 +54,7 @@ SURFACES: list[tuple[str, str]] = [
 SURFACE_LABEL = {code: label for code, label in SURFACES}
 
 CAVEATS = [
+    "Promotional pricing (as announced): Genie Spaces (Genie One) and Genie Agents are FREE through 31 Jan 2027 — so their usage shows real DBUs but $0 billable until then. Genie Code is 25% off (stacks with existing commit / P3 / Azure discounts). This is why the Spaces / Agents surfaces can carry heavy usage yet contribute $0 to billable spend — it's the promo, not missing data.",
     "Free usage IS now in the billing system tables: as of 20 Jul 2026, free Genie usage is recorded under the GENIE_FREE_USAGE SKU (billing_origin_product='GENIE'). It tracks DBUs but carries NO list price (no system.billing.list_prices row), so it shows as $0 — the app values it at the estate's effective billed Genie rate to show what it would have cost. Free usage consumed BEFORE 20 Jul is not in the tables. See docs.databricks.com 'Monitor and understand your Genie cost'.",
     "Billed Genie usage lands under a regional Serverless Real-Time Inference SKU (e.g. ENTERPRISE_SERVERLESS_REAL_TIME_INFERENCE_*); GENIE_FREE_USAGE is the free tier. Both carry billing_origin_product='GENIE' — filter on that, not on SKU name.",
     "Split is by usage_metadata.genie.surface (GENIE_CODE = Code, GENIE_ONE = Genie One / Databricks One chat, GENIE_AGENTS = agent surface). The surface enum is open, a dedicated Spaces value may appear as usage grows, so the app labels whatever values appear rather than assuming a fixed set.",
@@ -230,19 +231,27 @@ def _rows_with_paid(gt_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _rows_billable(gt_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Live path: the PAID system.billing.usage rows passed in (the regional
-    Serverless Real-Time Inference SKU, with GENIE_FREE_USAGE already excluded)
-    ARE the billable usage above the 150 free DBU/user/month allowance. So paid ==
-    the billed amount; we do NOT subtract the free allowance again (that would
-    under-report the real charge). Free usage is handled separately via the
-    GENIE_FREE_USAGE SKU and surfaced as free_absorbed_usd."""
-    return [{
-        "workspace": r["workspace"], "workspace_id": r.get("workspace_id", ""),
-        "user_identity": r["user_identity"],
-        "surface": r["surface"], "label": r["label"],
-        "total_dbus": r["total_dbus"], "total_list_cost_usd": r["total_list_cost_usd"],
-        "paid_dbus": r["total_dbus"], "paid_list_cost_usd": r["total_list_cost_usd"],
-    } for r in gt_rows]
+    """Live path: the billable (paid) usage above the 150 free DBU/user/month
+    allowance is the portion on the priced Serverless Real-Time Inference SKU.
+
+    total_dbus / total_list_cost_usd now INCLUDE the free tier (so free-absorbed
+    surfaces like Agents/Spaces show real usage instead of $0). The PAID figures
+    come from the explicit ``billed_dbus`` / ``billed_list_cost_usd`` fields the
+    live builder attaches. For backward-compat with any caller that doesn't supply
+    them (older shape), fall back to paid == total."""
+    out: list[dict[str, Any]] = []
+    for r in gt_rows:
+        paid_dbus = r["billed_dbus"] if "billed_dbus" in r else r["total_dbus"]
+        paid_usd = (r["billed_list_cost_usd"] if "billed_list_cost_usd" in r
+                    else r["total_list_cost_usd"])
+        out.append({
+            "workspace": r["workspace"], "workspace_id": r.get("workspace_id", ""),
+            "user_identity": r["user_identity"],
+            "surface": r["surface"], "label": r["label"],
+            "total_dbus": r["total_dbus"], "total_list_cost_usd": r["total_list_cost_usd"],
+            "paid_dbus": paid_dbus, "paid_list_cost_usd": paid_usd,
+        })
+    return out
 
 
 def _workspace_totals_from(full_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

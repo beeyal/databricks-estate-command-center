@@ -957,7 +957,13 @@ def get_workspace_options() -> dict[str, Any]:
         # friendly name (or id fallback) as the label the dropdowns display.
         try:
             names = _live_payload_cached("workspace-names", lambda: live._workspace_names(WAREHOUSE_ID))
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            # Dropdown-populate only — degrade to an empty picker (the full
+            # /api/workspaces payload still carries names). Log the reason so a
+            # systemic read failure (e.g. lost SELECT on workspaces_latest) isn't
+            # completely invisible, rather than silently returning "no workspaces".
+            import logging
+            logging.getLogger("finops.app").warning("workspace-options live read failed: %s", e)
             names = {}
         rows = [{"workspace": nm or wid, "workspace_id": wid} for wid, nm in (names or {}).items()]
         return _wrap(rows, live_source=True)

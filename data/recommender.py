@@ -457,9 +457,12 @@ def savings_basis_for_query(q: dict[str, Any], insight_type: str) -> str:
             f"x min(1, pruning gap + 0.3)"
         )
     if insight_type == "optimize":
+        # Show the SAME ratio the savings calc uses (the real measured small-file
+        # ratio, no floor — see _savings). The old "max(0.4, small), floor 0.40"
+        # string could print a different multiplier than the one actually applied.
         return (
             f"observed monthly cost ${cost:,.0f} x {OPTIMIZE_COMPACT} compaction-gain "
-            f"x small-file ratio ({max(0.4, small):.2f}, floor 0.40)"
+            f"x small-file ratio ({small:.2f})"
         )
     if insight_type == "vacuum":
         return (

@@ -142,9 +142,24 @@ export function postAck(body: {
   return postEnvelope<{ ok: boolean }>(`/acks`, body);
 }
 export async function deleteAck(source: string, entityKey: string): Promise<void> {
-  await fetch(`${API_BASE}/acks/${encodeURIComponent(source)}/${encodeURIComponent(entityKey)}`, {
+  // Must check res.ok: fetch does NOT reject on a non-2xx status, so without this
+  // a failed reopen (e.g. 503 when the writeback store is unavailable) would
+  // resolve as success — the UI would close the popover and refetch, showing the
+  // item STILL suppressed, i.e. the "reopen button does nothing" symptom. Throw
+  // like postEnvelope so callers can surface the failure instead of faking success.
+  const res = await fetch(`${API_BASE}/acks/${encodeURIComponent(source)}/${encodeURIComponent(entityKey)}`, {
     method: "DELETE",
   });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = body?.detail ? `: ${body.detail}` : "";
+    } catch {
+      /* non-JSON body */
+    }
+    throw new Error(`Could not reopen (${res.status})${detail}`);
+  }
 }
 
 export function fetchCostDrivers(
