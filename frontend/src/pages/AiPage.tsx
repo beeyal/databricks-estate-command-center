@@ -164,8 +164,8 @@ export function AiPage() {
           <div className="flex flex-col gap-2">
             <h3 className="text-sm font-semibold flex items-center gap-1.5">
               AI endpoints & workloads
-              <InfoTip text="Every AI endpoint / workload with spend: product, owner, billing mode, GPU, whether it scales to zero, DBUs and $/mo. Sort by $ to find the biggest line items." />
-              {endpoints.length > 150 && <span className="text-xs font-normal text-neutral">top 150 of {endpoints.length} by $</span>}
+              <InfoTip text="One line per endpoint × workspace × owner with spend (so the same endpoint used in several workspaces appears once per workspace — that's why this list is longer than the distinct-endpoint KPI). Shows product, owner, billing mode, GPU, scale-to-zero, DBUs and $/mo. Sort by $ to find the biggest line items." />
+              {endpoints.length > 150 && <span className="text-xs font-normal text-neutral">top 150 of {endpoints.length} line items by $</span>}
             </h3>
             <DataTable columns={endpointColumns} rows={endpoints.slice(0, 150)} rowKey={(e) => `${e.workspace}|${e.name}`} initialSort={{ key: "usd", dir: "desc" }} emptyMessage="No AI spend for this scope." />
           </div>

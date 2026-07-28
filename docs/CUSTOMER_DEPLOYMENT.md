@@ -427,6 +427,17 @@ Pull the latest code into the Git folder and re-run the deploy cell
 Your settings live in `app.yaml`, outside the code, so an upgrade never disturbs them.
 Use the same target you originally deployed (`-t customer` or `-t customer-lakebase`).
 
+> [!IMPORTANT]
+> **After an upgrade, re-run `finops_gold_sync` once.** The Overview, Jobs, Tables and
+> Governance tabs serve the **nightly precomputed gold snapshot**, not a live scan — so a
+> new release that changes how those tabs compute their numbers only takes effect once the
+> gold job rebuilds with the new code. Redeploying the app alone updates the code but keeps
+> serving the *previous* snapshot until the next scheduled run. Trigger `finops_gold_sync`
+> manually after upgrading (or wait for the nightly run) so every tab reflects the new
+> version. (The live-scan tabs — Warehouses, Clusters, Query Advisor, Genie $, AI $ — pick
+> up the new code on the app restart alone; only bump `FINOPS_CACHE_VERSION` if you want to
+> force-drop their cached payloads immediately instead of waiting out the 1-hour TTL.)
+
 > [!NOTE]
 > **Acknowledge / ignore** (dismissing an alert so it stops surfacing every refresh) is
 > **on by default**. On the default (Delta) backend it stores state in a small
@@ -448,6 +459,7 @@ Use the same target you originally deployed (`-t customer` or `-t customer-lakeb
 | App won't start in live mode / logs say "LIVE MODE REQUIRES A GOLD SCHEMA" | Set `FINOPS_GOLD_SCHEMA` in `app.yaml` (step ②) and redeploy — it's required in live mode. For a read-only eval with no writable schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` instead (slow; not for production). |
 | Data still looks empty after `USE_LIVE: "true"` | Confirm `DATABRICKS_WAREHOUSE_ID` **and** `FINOPS_GOLD_SCHEMA` are set in `app.yaml`, that you re-ran the deploy cell, and that you **ran `finops_gold_sync` once** (step ⑤) — live pages serve from gold, which is empty until the first run. |
 | Governance / Access group panels show "run the daily job" | Unpause **estate-command-center-admin-sync** (step ⑤) and let it run once. |
+| **Acknowledge / Reopen buttons do nothing** (or the ack controls disappeared) after you **deleted + recreated** the app | A recreated app gets a **new service principal**, which cannot use the previous SP's writeback schema (Delta: "permission denied"; Lakebase: "permission denied for schema …"). The app now reports writeback **off** with the reason rather than failing silently. **Fix:** for the Lakebase backend set a **fresh** `FINOPS_LAKEBASE_SCHEMA` (e.g. `estate2`) so the new SP creates + owns its own schema, then redeploy; for the Delta backend re-run the `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<new-app-service-principal>\`` from step ④ with the new SP. |
 | Pages slow | Confirm the `finops_gold_sync` job actually ran (step ⑤); the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale or you enabled the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch. |
 | No **BU** facet / no **Team** column | Those are optional (step ⑥). Create the mapping tables from [`reference/mapping_tables_setup.sql`](../reference/mapping_tables_setup.sql), set `workspace_bu_table` / `user_team_table`, grant the app SP `SELECT`, and redeploy. |
 | "Workspace has reached the maximum limit of 300 apps" | The target workspace is full — deploy to another workspace. System-table billing is account-wide, so any workspace in the account sees the same usage. |

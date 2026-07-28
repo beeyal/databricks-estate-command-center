@@ -1612,7 +1612,12 @@ def tables_live(warehouse_id: str) -> list[dict[str, Any]]:
         "tbl AS (SELECT concat_ws('.',table_catalog,table_schema,table_name) fqn, table_catalog c, "
         "  table_schema s, table_name t, table_type tt, datediff(DAY, CAST(last_altered AS DATE), current_date()) age "
         "  FROM system.information_schema.tables "
-        "  WHERE table_schema<>'information_schema' AND table_catalog<>'system') "
+        # Exclude system AND samples: samples is read-only public demo data (nyctaxi/
+        # tpch/…), not the customer's estate, and it has no row in the size census
+        # (gold excludes it too) — so including it polluted the Tables tab with
+        # heavily-read, zero-size rows that crowded out real tables. Match the gold
+        # census + adoption filter exactly so FQNs join and the list is the estate.
+        "  WHERE table_schema<>'information_schema' AND table_catalog NOT IN ('system','samples')) "
         "SELECT tbl.fqn, u.reads, u.days_since_read, tbl.c, tbl.s, tbl.t, tbl.tt, tbl.age "
         "FROM tbl LEFT JOIN u ON tbl.fqn=u.fqn "
         "ORDER BY u.reads DESC NULLS LAST, tbl.age ASC LIMIT 200",
@@ -1968,7 +1973,7 @@ def classification_live(warehouse_id: str) -> dict[str, Any]:
     tables_scanned = int(_f(scanned[0].get("t"))) if scanned else 0
     tot = _run(warehouse_id,
         "SELECT COUNT(*) t FROM system.information_schema.tables "
-        "WHERE table_schema <> 'information_schema' AND table_catalog <> 'system'",
+        "WHERE table_schema <> 'information_schema' AND table_catalog NOT IN ('system','samples')",
         "information_schema.tables")
     tables_total = int(_f(tot[0].get("t"))) if tot else 0
 
@@ -2105,7 +2110,9 @@ def governance_live(warehouse_id: str, ingest_schema: str) -> dict[str, Any]:
     ext = _try(lambda: _run(warehouse_id,
         "SELECT SUM(CASE WHEN table_type='EXTERNAL' THEN 1 ELSE 0 END) ext, COUNT(*) tot "
         "FROM system.information_schema.tables "
-        "WHERE table_schema<>'information_schema' AND table_catalog<>'system'",
+        # Exclude samples too (read-only public demo catalog) so the governance
+        # external-share % reflects the customer's own estate, matching Tables/gold.
+        "WHERE table_schema<>'information_schema' AND table_catalog NOT IN ('system','samples')",
         "information_schema.tables (external share)"), [], "external")
     n_tot = _f(ext[0].get("tot")) if ext else 0.0
     pct_ext = (_f(ext[0].get("ext")) / n_tot) if n_tot else 0.0
@@ -2355,6 +2362,7 @@ def access_tree_live(warehouse_id: str) -> dict[str, Any]:
     rows = _run(warehouse_id,
         "SELECT table_catalog c, table_schema s, table_name t "
         "FROM system.information_schema.tables WHERE table_schema<>'information_schema' "
+        "AND table_catalog NOT IN ('system','samples') "
         "ORDER BY 1,2,3 LIMIT 5000", "information_schema.tables (tree)")
     catalogs: dict[str, dict[str, list[str]]] = {}
     for r in rows:

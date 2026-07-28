@@ -550,6 +550,21 @@ def _attach_platform_total_payload(payload: dict) -> dict:
 # API — config + overview
 # ---------------------------------------------------------------------------
 
+def _effective_genie_space_id() -> str:
+    """The Genie Space id the app will ACTUALLY answer with. In live mode with the
+    Genie feature on, the app auto-provisions a Space and discovers its id (env var
+    usually blank), so report the resolved id — not the raw env — so /api/config
+    reflects Genie's real state. Best-effort + fast: never blocks/raises config."""
+    env_val = str(_SETTINGS["genie_space_id"])
+    if env_val or not USE_LIVE or not _FEATURES.get("genie"):
+        return env_val
+    try:
+        from data import genie_client
+        return genie_client._space_id() or ""
+    except Exception:  # noqa: BLE001 — config must never break on discovery
+        return env_val
+
+
 @app.get("/api/config")
 def get_config() -> dict[str, Any]:
     # Writeback is reported as on only when it can actually persist (see
@@ -594,9 +609,14 @@ def get_config() -> dict[str, Any]:
         # Why writeback is off when the flag is on but it can't persist (honest
         # degradation for the default-on feature). Blank when writeback is fine.
         "writeback_note": ("" if _writeback_ok else _writeback_reason),
-        # Genie Space curated over cost/usage tables. Blank ⇒ demo mode canned
-        # answers (or the auto-created FinOps space once provisioned).
-        "genie_space_id": str(_SETTINGS["genie_space_id"]),
+        # Genie Space curated over cost/usage tables. Report the EFFECTIVE space id
+        # actually used to answer — not just the env var. In live mode the app
+        # auto-provisions a Space and resolves its id from <schema>.finops_admin
+        # (or by title), so the env var is usually blank even though Ask Genie
+        # works. Reporting the raw env var made /api/config claim Genie was
+        # unconfigured while it was answering fine (a config-honesty gap, same
+        # class as the writeback one). Fall back to the env value off the live path.
+        "genie_space_id": _effective_genie_space_id(),
         # Whether the business-unit dimension exists (demo always; live only when
         # workspace_bu_table is configured). The UI hides all BU columns/filters/
         # cost-splits when false (a customer review #16).
@@ -1435,10 +1455,14 @@ def get_warehouses(
                     or wh.warehouses_live(WAREHOUSE_ID, time_range))
         rows = payload.get("warehouses", [])
         message = payload.get("message", "")
+        total_active = payload.get("total_active", 0)
+        truncated = bool(payload.get("truncated"))
         live_source = True
     else:
         rows = wh.warehouses_demo()
         message = ""
+        total_active = 0
+        truncated = False
         live_source = False
 
     # Time-window scaling (demo): runs + cost scale to the trailing window;
@@ -1479,6 +1503,13 @@ def get_warehouses(
     )
     wrapped = _wrap(rows, live_source=live_source)
     wrapped["summary"] = summary
+    # Surface the top-N cap honestly: shown = post-filter row count, total_active =
+    # the universe (distinct active warehouses) so the UI can say "top N of M"
+    # instead of implying the visible rows are the whole estate.
+    wrapped["shown"] = len(rows)
+    if total_active:
+        wrapped["total_active"] = total_active
+        wrapped["truncated"] = bool(truncated)
     if message:
         wrapped["message"] = message
     if ack_sink is not None:

@@ -177,6 +177,13 @@ export function WarehousesMonitorPage() {
             <InfoTip text="Metrics come from system.query.history (per-query durations, queued-at-capacity, spill) aggregated per warehouse. Cost is a list-price estimate. Serverless SQL is included; interactive-cluster SQL is on the Clusters tab." />
           </div>
 
+          {data?.truncated && (data?.total_active ?? 0) > 0 && (
+            <div className="text-xs text-neutral -mt-1">
+              Showing the top <span className="tabular-nums">{data.shown ?? rows.length}</span> warehouses by cost of{" "}
+              <span className="tabular-nums">{data.total_active}</span> active in this window — the KPIs above cover these top warehouses.
+            </div>
+          )}
+
           <DataTable
             columns={columns}
             updating={loading && !!data}

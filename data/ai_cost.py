@@ -146,40 +146,44 @@ def assemble(rows_all: list[dict[str, Any]], workspace: str | None = None,
     total_usd = round(sum(r["list_usd_month"] for r in rows), 2)
     total_dbus = round(sum(r["dbus_month"] for r in rows), 1)
 
-    # by product
+    # A "row" is an (endpoint name × product × workspace × owner) tuple — the live
+    # SQL groups by all four, so ONE endpoint used in N workspaces / by M owners
+    # is N×M rows. "Endpoints" counts must therefore be DISTINCT endpoint NAMES,
+    # not row counts (counting rows reported 23k "endpoints" for 6.5k real ones).
+    # by product — distinct endpoint names per product
     prod: dict[str, dict[str, Any]] = {}
     for r in rows:
-        p = prod.setdefault(r["product"], {"code": r["product"], "label": r["product_label"], "list_usd": 0.0, "dbus": 0.0, "endpoints": 0})
+        p = prod.setdefault(r["product"], {"code": r["product"], "label": r["product_label"], "list_usd": 0.0, "dbus": 0.0, "names": set()})
         p["list_usd"] += r["list_usd_month"]
         p["dbus"] += r["dbus_month"]
-        p["endpoints"] += 1
+        p["names"].add(r["name"])
     by_product = sorted(
         [{"code": p["code"], "label": p["label"], "list_usd": round(p["list_usd"], 2),
-          "dbus": round(p["dbus"], 1), "endpoints": p["endpoints"],
+          "dbus": round(p["dbus"], 1), "endpoints": len(p["names"]),
           "pct": round(p["list_usd"] / total_usd, 4) if total_usd else 0.0} for p in prod.values()],
         key=lambda x: -x["list_usd"],
     )
 
-    # by workspace
+    # by workspace — distinct endpoint names per workspace
     ws: dict[str, dict[str, Any]] = {}
     for r in rows:
-        w = ws.setdefault(r["workspace"], {"workspace": r["workspace"], "list_usd": 0.0, "endpoints": 0})
+        w = ws.setdefault(r["workspace"], {"workspace": r["workspace"], "list_usd": 0.0, "names": set()})
         w["list_usd"] += r["list_usd_month"]
-        w["endpoints"] += 1
+        w["names"].add(r["name"])
     by_workspace = sorted(
-        [{"workspace": w["workspace"], "list_usd": round(w["list_usd"], 2), "endpoints": w["endpoints"]} for w in ws.values()],
+        [{"workspace": w["workspace"], "list_usd": round(w["list_usd"], 2), "endpoints": len(w["names"])} for w in ws.values()],
         key=lambda x: -x["list_usd"],
     )
 
-    # by user (owner)
+    # by user (owner) — distinct endpoint names per owner
     usr: dict[str, dict[str, Any]] = {}
     for r in rows:
-        u = usr.setdefault(r["owner"], {"user": r["owner"], "list_usd": 0.0, "endpoints": 0, "prod": {}})
+        u = usr.setdefault(r["owner"], {"user": r["owner"], "list_usd": 0.0, "names": set(), "prod": {}})
         u["list_usd"] += r["list_usd_month"]
-        u["endpoints"] += 1
+        u["names"].add(r["name"])
         u["prod"][r["product_label"]] = u["prod"].get(r["product_label"], 0.0) + r["list_usd_month"]
     by_user = sorted(
-        [{"user": u["user"], "list_usd": round(u["list_usd"], 2), "endpoints": u["endpoints"],
+        [{"user": u["user"], "list_usd": round(u["list_usd"], 2), "endpoints": len(u["names"]),
           "top_product": max(u["prod"], key=u["prod"].get) if u["prod"] else None} for u in usr.values()],
         key=lambda x: -x["list_usd"],
     )
@@ -209,7 +213,8 @@ def assemble(rows_all: list[dict[str, Any]], workspace: str | None = None,
         "summary": {
             "total_list_usd_month": total_usd,
             "total_dbus_month": total_dbus,
-            "num_endpoints": len(rows),
+            # DISTINCT endpoint names, not row count (rows are endpoint×ws×owner).
+            "num_endpoints": len({r["name"] for r in rows}),
             "num_products": len(by_product),
             "distinct_users": len({r["owner"] for r in rows}),
             "num_workspaces": len({r["workspace"] for r in rows}),

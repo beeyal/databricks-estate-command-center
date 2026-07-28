@@ -406,7 +406,26 @@ def warehouses_live(warehouse_id: str, time_range: str = "30d") -> dict[str, Any
         row["reasons"] = _classify(row)
         row["advice"] = advise(row)
         out.append(row)
-    return {"warehouses": out, "summary": summarize(out), "message": ""}
+    total_active = _active_warehouse_count(warehouse_id, days)
+    return {"warehouses": out, "summary": summarize(out),
+            "total_active": total_active, "shown": len(out),
+            "truncated": bool(total_active and total_active > len(out)),
+            "message": ""}
+
+
+def _active_warehouse_count(warehouse_id: str, days: int) -> int:
+    """Distinct warehouses with any query activity in the window — the TRUE
+    universe behind the top-100-by-cost list. Lets the UI say "top 100 of N"
+    instead of implying the shown 100 are the whole estate. Best-effort → 0."""
+    from data import live
+    try:
+        r = live._run(warehouse_id,
+            "SELECT approx_count_distinct(compute.warehouse_id) n FROM system.query.history "
+            f"WHERE start_time>=dateadd(day,-{days},current_date()) AND start_time<current_date() "
+            "AND compute.warehouse_id IS NOT NULL", "warehouse universe count")
+        return int(live._f(r[0].get("n"))) if r else 0
+    except Exception:  # noqa: BLE001 — best-effort; 0 ⇒ UI just omits the note
+        return 0
 
 
 def warehouses_from_daily(warehouse_id: str, gold_schema: str, time_range: str = "30d") -> dict[str, Any] | None:
@@ -489,7 +508,11 @@ def warehouses_from_daily(warehouse_id: str, gold_schema: str, time_range: str =
         row["reasons"] = _classify(row)
         row["advice"] = advise(row)
         out.append(row)
-    return {"warehouses": out, "summary": summarize(out), "message": ""}
+    total_active = _active_warehouse_count(warehouse_id, days)
+    return {"warehouses": out, "summary": summarize(out),
+            "total_active": total_active, "shown": len(out),
+            "truncated": bool(total_active and total_active > len(out)),
+            "message": ""}
 
 
 def _live_percentiles(warehouse_id: str, days: int) -> dict[str, dict[str, float]]:

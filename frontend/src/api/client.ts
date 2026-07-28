@@ -222,6 +222,12 @@ export function fetchQueries(
 
 export interface WarehousesEnvelope extends Envelope<WarehouseRow[], WarehouseSummary> {
   message?: string;
+  /** Distinct warehouses active in the window (universe behind the top-N list). */
+  total_active?: number;
+  /** How many rows are actually returned (the top-N cap). */
+  shown?: number;
+  /** True when total_active > shown, so the UI can say "top N of M". */
+  truncated?: boolean;
 }
 export function fetchWarehouses(
   params: Record<string, string> = {},
