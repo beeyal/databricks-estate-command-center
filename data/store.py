@@ -75,6 +75,13 @@ def enabled() -> bool:
     return True
 
 
+# Cache: (expiry_epoch, backend_it_was_computed_for, result). Keyed on the resolved
+# backend so a backend change (e.g. tests flipping USE_LIVE, or config reload)
+# invalidates it — not just time.
+_operational_cache: tuple[float, str, tuple[bool, str]] | None = None
+_OPERATIONAL_TTL_S = 60.0
+
+
 def operational() -> tuple[bool, str]:
     """Whether writeback can ACTUALLY persist in the current config — the real gate
     (writeback is always enabled). Prevents the silent-failure trap where writeback
@@ -82,7 +89,34 @@ def operational() -> tuple[bool, str]:
     is configured (needs `gold_schema` or `FINOPS_WRITEBACK_SCHEMA`) and the app SP
     has no write grant there. Returns (ok, reason). The app surfaces this on
     /api/config so the UI can hide the ack controls with an honest note instead of
-    letting acks vanish. Demo + Lakebase are always operational."""
+    letting acks vanish. Demo + Lakebase are always operational.
+
+    Result is memoised for a short TTL: the Lakebase branch opens a Postgres
+    connection to probe, and this is called on every alert-tab request (via
+    _apply_acks / _acks_for) plus /api/config — without the cache that's a
+    per-request DB round-trip. The status rarely changes; a 60s TTL keeps it fresh
+    enough while collapsing the repeat calls within/across requests to one probe.
+    A negative result is NOT cached (so a just-fixed grant is picked up promptly)."""
+    global _operational_cache
+    import time as _t
+    try:
+        cur_backend = _backend()
+    except Exception:  # noqa: BLE001 — fall through to uncached, which reports it
+        cur_backend = "?"
+    hit = _operational_cache
+    # Valid only if fresh AND computed for the SAME backend (guards a mid-process
+    # backend switch — tests, or a config reload — from serving a stale verdict).
+    if hit is not None and hit[1] == cur_backend and (_t.time() - hit[0]) < _OPERATIONAL_TTL_S:
+        return hit[2]
+    result = _operational_uncached()
+    # Cache only the healthy result — re-probe each call while broken so a fix
+    # (grant added, schema created) is reflected without waiting out the TTL.
+    if result[0]:
+        _operational_cache = (_t.time(), cur_backend, result)
+    return result
+
+
+def _operational_uncached() -> tuple[bool, str]:
     try:
         b = _backend()
     except Exception as e:  # noqa: BLE001
@@ -475,11 +509,14 @@ def _reset_lakebase_ensured() -> None:
     rotated or a still-within-TTL token was revoked server-side. Must also clear the
     credential + instance-name caches — otherwise the next call re-uses the SAME
     stale token and fails again until the ~45min TTL elapses, leaving writeback dead."""
-    global _lakebase_ensured, _lakebase_cache_ensured, _lakebase_instance_name
+    global _lakebase_ensured, _lakebase_cache_ensured, _lakebase_instance_name, _operational_cache
     _lakebase_ensured = False
     _lakebase_cache_ensured = False
     _lakebase_instance_name = None
     _lakebase_cred.clear()
+    # Also drop the memoised operational() status — a connection error means the
+    # cached "ok" is stale; force the next operational() call to re-probe.
+    _operational_cache = None
 
 
 def _lakebase_ensure(cur) -> None:
