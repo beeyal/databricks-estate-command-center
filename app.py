@@ -343,9 +343,11 @@ def _apply_acks(rows: list[dict[str, Any]], *, source: str, key_of, metric_field
     caller that already fetched the ack records (e.g. the hub, which also needs
     them for its status counts) pass them in to avoid a second store round-trip.
     """
-    if not _FEATURES.get("writeback"):
-        return rows
     from data import store
+    # Writeback is a built-in; skip the overlay only when it can't PERSIST (e.g.
+    # live+Delta with no writable schema) — then every row just shows as 'open'.
+    if not store.operational()[0]:
+        return rows
     from datetime import date
 
     if acks is None:
@@ -397,17 +399,15 @@ def _apply_acks(rows: list[dict[str, Any]], *, source: str, key_of, metric_field
 
 
 def _acks_for(source: str) -> dict | None:
-    """Fetch the ack records for a source ONCE per request (None when writeback is
-    off). Callers pass the result to BOTH _apply_acks(acks=...) and
+    """Fetch the ack records for a source ONCE per request (None when writeback
+    can't persist). Callers pass the result to BOTH _apply_acks(acks=...) and
     _counts_from_acks(), so a single store round-trip powers the overlay + the
     status-filter chip counts (avoids the N+1 of fetching twice)."""
-    if not _FEATURES.get("writeback"):
-        return None
     from data import store
-    # Gate on OPERATIONAL, not just the flag: when writeback can't persist (live
-    # + Delta + no writeback schema) the UI already hides the ack controls via
-    # /api/config, so skip the per-request Delta round-trip that would just fail
-    # soft to {} and log noise on every alert-tab load.
+    # Writeback is a built-in; gate on whether it can PERSIST. When it can't (live
+    # + Delta + no writable schema) the UI already hides the ack controls via
+    # /api/config, so skip the per-request round-trip that would just fail soft to
+    # {} and log noise on every alert-tab load.
     if not store.operational()[0]:
         return None
     return store.get_acks(WAREHOUSE_ID, source)
@@ -613,16 +613,16 @@ def get_config() -> dict[str, Any]:
             "genie": bool(_FEATURES["genie"]),
             "ai_narration": bool(_FEATURES["ai_narration"]),
             "dqm": bool(_FEATURES["dqm"]),
-            # Writeback (acknowledge/ignore) — reported as on ONLY when it can
-            # actually PERSIST. In live mode with the Delta backend this needs a
-            # writeback schema (gold_schema or FINOPS_WRITEBACK_SCHEMA) + a CREATE/
-            # MODIFY grant for the app SP; if that's missing we report writeback
-            # OFF (with writeback_note) so the UI hides the ack controls instead of
-            # letting acks silently vanish. Demo + Lakebase are always operational.
+            # Writeback (acknowledge/dismiss) is a BUILT-IN capability, not a toggle —
+            # it always ships with the app. This field is its OPERATIONAL STATUS: true
+            # when it can actually persist, false when it can't (live + Delta backend
+            # with no writable schema / grant). The UI shows the ack controls only when
+            # true, so a persistence gap hides them with an honest note rather than
+            # letting a dismissal silently vanish. Demo + Lakebase are always operational.
             "writeback": _writeback_ok,
         },
-        # Why writeback is off when the flag is on but it can't persist (honest
-        # degradation for the default-on feature). Blank when writeback is fine.
+        # Why writeback can't persist right now (blank when it's fine). Honest
+        # degradation for the built-in capability.
         "writeback_note": ("" if _writeback_ok else _writeback_reason),
         # Genie Space curated over cost/usage tables. Report the EFFECTIVE space id
         # actually used to answer — not just the env var. In live mode the app
@@ -687,8 +687,9 @@ def get_overview(workspace: str = Query("all"), time_range: str = Query("30d")) 
 def _filter_attention_acks(ov: dict[str, Any]) -> None:
     """Drop acknowledged/ignored items from the landing 'needs attention' list
     (writeback), applying the same smart re-alert rule as everywhere else — a
-    reopened item stays. No-op when writeback is off. Mutates in place."""
-    if not _FEATURES.get("writeback"):
+    reopened item stays. No-op when writeback can't persist. Mutates in place."""
+    from data import store
+    if not store.operational()[0]:
         return
     items = ov.get("needs_attention") or []
     if not items:
@@ -1380,16 +1381,11 @@ class AckRequest(BaseModel):
     snooze_days: int | None = None
 
 
-def _writeback_404():
-    return JSONResponse({"detail": "Writeback feature disabled"}, status_code=404)
-
-
 @app.get("/api/acks")
 def get_acks(source: str = Query("")) -> dict[str, Any]:
     """All ack records (optionally for one source) as {entity_key: record}.
-    404 when writeback is off; empty dict when the store is simply empty."""
-    if not _FEATURES.get("writeback"):
-        return _writeback_404()
+    Writeback is a built-in — this returns the records (empty dict when the store
+    is empty or can't currently persist; the UI reads /api/config for the reason)."""
     from data import store
 
     return _wrap(store.get_acks(WAREHOUSE_ID, source or None), live_source=USE_LIVE)
@@ -1412,8 +1408,6 @@ def post_ack(req: AckRequest, request: Request) -> dict[str, Any]:
     """Acknowledge / ignore / mark-in-progress one alert. The magnitude is
     snapshotted from the client-supplied metric_at_ack (the value the row is
     showing right now) so smart re-alert can compare later."""
-    if not _FEATURES.get("writeback"):
-        return _writeback_404()
     from data import store
 
     rec = req.model_dump()
@@ -1432,8 +1426,6 @@ def post_ack(req: AckRequest, request: Request) -> dict[str, Any]:
 @app.delete("/api/acks/{source}/{entity_key:path}")
 def delete_ack(source: str, entity_key: str) -> dict[str, Any]:
     """Reopen an acknowledged/ignored item (removes its ack record)."""
-    if not _FEATURES.get("writeback"):
-        return _writeback_404()
     from data import store
 
     ok = store.delete_ack(WAREHOUSE_ID, source, entity_key)

@@ -75,22 +75,23 @@ env:
   # Data Quality tab (reads system.data_quality_monitoring — needs that grant).
   - name: FINOPS_FEATURE_DQM
     value: "true"
-  # Acknowledge / dismiss controls on alerts (so a known-OK item stops nagging).
-  # See WRITEBACK below for where the state is stored. Set "false" for a strictly
-  # read-only deployment (controls hidden). Leave "true" for the normal experience.
-  - name: FINOPS_FEATURE_WRITEBACK
-    value: "true"
+  # (Acknowledge / dismiss on alerts is BUILT IN — it always ships with the app,
+  # there's no flag to turn it off. Where its state is stored is set by the deploy
+  # target, not here — see WRITEBACK STORAGE below.)
 
   # ════════════════════════════════════════════════════════════════════════
-  # WRITEBACK STORAGE — where acknowledge/dismiss state is saved (live mode).
+  # WRITEBACK STORAGE — where the (always-on) acknowledge/dismiss state is saved.
   #
-  #   You do NOT choose "Lakebase vs Delta" here — the DEPLOY TARGET decides:
+  #   Acknowledge/dismiss is built in. The ONLY choice is the storage backend, and
+  #   it's set by the DEPLOY TARGET (a bundle can't create-or-skip the Postgres
+  #   instance from a value here):
   #     • `databricks bundle deploy -t customer`        → LAKEBASE (recommended)
   #         The bundle creates + wires a managed Postgres instance for you.
   #         Snappy at any scale; nothing to set below.
-  #     • `databricks bundle deploy -t customer-delta`  → DELTA (fallback)
-  #         For "don't use Lakebase" — stores one tiny table in the schema below.
-  #         No extra infrastructure, no extra cost.
+  #     • `databricks bundle deploy -t customer-delta`  → DELTA (the only opt-out)
+  #         No Postgres instance — state goes in one tiny Delta table in the schema
+  #         below. No extra infra/cost, BUT the app's service principal needs write
+  #         (CREATE/MODIFY) on that schema (see the deployment guide, Step ④).
   #
   #   Use the default (`-t customer`, Lakebase) unless you specifically don't want
   #   a managed-Postgres instance. Demo mode ignores all of this (state in-memory).

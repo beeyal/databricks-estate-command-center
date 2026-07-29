@@ -31,12 +31,13 @@ _DEFAULTS: dict[str, Any] = {
     # ai_narration defaults OFF — deterministic rule text is the safe, no-model-
     # call default (matches the docstring above + admin_sync/provision, which
     # both default FINOPS_FEATURE_AI_NARRATION to "false" when the env is unset).
-    # writeback defaults ON — the acknowledge/ignore state tier. Backed by an
-    # in-process store in demo and a small Delta table in live (no Postgres
-    # dependency unless Lakebase is explicitly configured). Still independently
-    # switchable off (FINOPS_FEATURE_WRITEBACK=false) for a strictly read-only
-    # deployment — the controls hide + endpoints 404 when off.
-    "features": {"genie": True, "ai_narration": False, "dqm": True, "writeback": True},
+    # NB: writeback (acknowledge/dismiss) is NOT a feature flag — it's a built-in
+    # capability that ships with the app and cannot be turned off. The only choice
+    # is the STORAGE BACKEND, and that's set by the deploy target (a bundle can't
+    # conditionally create the Lakebase instance from a value): `-t customer` binds
+    # a Lakebase instance (used automatically); `-t customer-delta` has none, so the
+    # store falls back to a Delta table (the app SP needs write perms on the schema).
+    "features": {"genie": True, "ai_narration": False, "dqm": True},
     # Live is the shipped default. When USE_LIVE is unset the app still only serves
     # live once a warehouse + gold schema are configured; otherwise it falls back to
     # demo with a "finish setup" banner (see app.py). Explicit USE_LIVE=false stays demo.
@@ -103,12 +104,12 @@ def _resolve_flag(name: str, key: str) -> bool:
 
 @lru_cache(maxsize=1)
 def get_features() -> dict[str, bool]:
-    """The resolved ``{genie, ai_narration, dqm}`` flag contract."""
+    """The resolved ``{genie, ai_narration, dqm}`` flag contract. NB: writeback is
+    NOT here — it's a built-in capability (always on), not a toggleable feature."""
     return {
         "genie": _resolve_flag("FINOPS_FEATURE_GENIE", "genie"),
         "ai_narration": _resolve_flag("FINOPS_FEATURE_AI_NARRATION", "ai_narration"),
         "dqm": _resolve_flag("FINOPS_FEATURE_DQM", "dqm"),
-        "writeback": _resolve_flag("FINOPS_FEATURE_WRITEBACK", "writeback"),
     }
 
 

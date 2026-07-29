@@ -7,7 +7,7 @@
 [![Databricks App](https://img.shields.io/badge/Databricks-App-FF3621?style=for-the-badge&logo=databricks&logoColor=white)](/)
 [![Stack](https://img.shields.io/badge/Stack-Databricks%20%7C%20React%20%7C%20FastAPI-1B3139?style=for-the-badge)](/)
 [![Foundation Models](https://img.shields.io/badge/Foundation%20Models-Claude%20Sonnet%204.6-8B5CF6?style=for-the-badge&logo=anthropic&logoColor=white)](/)
-[![Feature-flagged](https://img.shields.io/badge/Feature--flagged-genie%20%7C%20ai__narration%20%7C%20dqm%20%7C%20writeback-06B6D4?style=for-the-badge)](/)
+[![Feature-flagged](https://img.shields.io/badge/Feature--flagged-genie%20%7C%20ai__narration%20%7C%20dqm-06B6D4?style=for-the-badge)](/)
 [![Genie-powered](https://img.shields.io/badge/Genie--powered-Ask%20%26%20cost%20attribution-8B5CF6?style=for-the-badge)](/)
 [![Demo-ready](https://img.shields.io/badge/Demo--ready-USE__LIVE%3Dfalse-F59E0B?style=for-the-badge)](/)
 
@@ -189,7 +189,7 @@ Governance also surfaces **Governed Tags + Data Classification**: governed-tag c
 - **Priority model:** `P1 = high $ impact × low effort × (or high risk)`; score = `normalise($/mo × frequency/severity ÷ effort) × risk_multiplier`. Sorted by tier then `$`. → Full scoring + tier-assignment rules in [**How the numbers are calculated**](#recommendations--priority).
 - **Cost-attribution panel:** spend by workspace / BU / tag / user, untagged %, top cost drivers, the specific tagging + budget-policy plays to close attribution gaps, **and a [Genie-spend breakdown](#genie-cost-attribution)** (Genie Code vs Genie Spaces per workspace × user).
 
-> **Working with alerts (acknowledge / ignore).** Every alert surface (Recommendations, Jobs, Warehouses, Clusters, Tables, Query Advisor) carries a single **always-visible action bar** above the table: a **status filter** (Open · Acknowledged · In progress · Won't fix · All, with counts) and an **Acknowledge** action that's disabled-with-a-hint until you tick one or more rows (so it's discoverable before selecting). Tick rows → acknowledge them in one step (with an optional reason + snooze), or **reopen** acked ones. Acknowledged items drop out of the default *Open* view and **auto-reopen** if the underlying metric gets materially worse (>25%) or the snooze lapses — so dismissing an alert is never permanent forgetting. Requires the `writeback` flag (on by default). See [Feature flags](#feature-flags--deploy-variants) for the live-mode persistence requirement.
+> **Working with alerts (acknowledge / ignore).** Every alert surface (Recommendations, Jobs, Warehouses, Clusters, Tables, Query Advisor) carries a single **always-visible action bar** above the table: a **status filter** (Open · Acknowledged · In progress · Won't fix · All, with counts) and an **Acknowledge** action that's disabled-with-a-hint until you tick one or more rows (so it's discoverable before selecting). Tick rows → acknowledge them in one step (with an optional reason + snooze), or **reopen** acked ones. Acknowledged items drop out of the default *Open* view and **auto-reopen** if the underlying metric gets materially worse (>25%) or the snooze lapses — so dismissing an alert is never permanent forgetting. Acknowledge/dismiss is **built in** (always on). See [Feature flags](#feature-flags--deploy-variants) for how its state is stored in live mode (Lakebase or Delta, set by the deploy target).
 
 > **Business-unit filters.** When you supply a `workspace_bu_table` mapping, a **Business unit** filter appears on Jobs, Warehouses, Clusters, Query Advisor, Workspaces and Recommendations (a job/warehouse/etc. inherits its workspace's BU). When no mapping is configured the BU dimension is hidden everywhere — nothing shows a blank placeholder.
 
@@ -322,11 +322,12 @@ The app reads a single config source — the environment variables in **`app.yam
 | `features.genie` | `true` | `true` | Ask Genie banner + `/api/genie/ask` SSE | Genie Conversation API over the auto-provisioned/`genie_space_id` Space. |
 | `features.ai_narration` | **`false`** | `true` | AI SQL-rewrite panel (+ optional LLM rec rationale) | **Off by default** (no model calls / no surprise spend) — the shipped demo config turns it on to showcase the EXPLAIN-validated rewrite. Falls back to deterministic text if no endpoint. |
 | `features.dqm` | `true` | `true` | Data Quality tab + `/api/dqm` | Lakehouse Monitoring inventory + cost tie-in. |
-| `features.writeback` | `true` | `true` | Acknowledge/ignore controls on every alert surface + `/api/acks` | **On by default** — independent of AI/Genie. State lives in a managed Lakebase (Postgres) instance on the recommended `-t customer` deploy; the `-t customer-delta` fallback uses a small Delta table via the read warehouse instead. Off ⇒ controls hidden + `/api/acks` 404. |
 
 > The **deterministic recommender**, **cost-attribution**, and **[Genie cost attribution](#genie-cost-attribution)** are **always on** regardless of these flags — they call no model, so they are not "AI features".
+>
+> **Acknowledge/dismiss (writeback) is also always on** — it's a built-in capability, not a flag. Its state lives in a managed Lakebase (Postgres) instance on the recommended `-t customer` deploy, or a small Delta table on the `-t customer-delta` fallback (the deploy target chooses the backend). `/api/config` reports whether it can currently persist; if it can't, the controls hide with an honest note.
 
-**Composable deploy variants** — the capabilities toggle independently, so any subset can be on. This repo's `app.yaml` ships the three AI/observability flags on (to showcase everything); the safe built-in default is genie + dqm on, ai_narration off. `writeback` is a separate, AI-independent flag and is on by default in every variant. A few common combinations:
+**Composable deploy variants** — the capabilities toggle independently, so any subset can be on. This repo's `app.yaml` ships the three AI/observability flags on (to showcase everything); the safe built-in default is genie + dqm on, ai_narration off. Acknowledge/dismiss (writeback) is **built in** — always on, independent of these flags; only its storage backend (Lakebase vs Delta) varies, by deploy target. A few common combinations:
 
 | Variant | `genie` | `ai_narration` | `dqm` | Tabs | For |
 |---|:--:|:--:|:--:|:--:|---|

@@ -1,11 +1,13 @@
 """Writeback store — persistent user state the read-only system tables can't hold.
 
-Backs the acknowledge/ignore capability (and, later, editable BU mapping +
-budgets). This is the ``features.writeback`` tier: OFF by default, and when off
-NOTHING here is touched — the app stays 100% read-only, endpoints 404, controls
-hidden. Mirrors the AI/Genie optionality contract.
+Backs the acknowledge/dismiss capability (and, later, editable BU mapping +
+budgets). Writeback is a BUILT-IN capability — it always ships with the app (there
+is no feature flag to disable it). The only question is whether it can PERSIST in
+the current deployment (see ``operational()``): demo + Lakebase always can; the
+Delta backend needs a writable schema + grant. When it can't, the UI hides the ack
+controls with an honest note (via /api/config) rather than dropping a write silently.
 
-Backend is pluggable so the same feature works everywhere:
+Backend is pluggable so the same capability works everywhere:
   * ``demo`` (USE_LIVE=false)  — an in-process dict. Resets on restart; fine for
     demos/showcases (the whole dataset is synthetic anyway).
   * ``delta`` (live, default)  — a small managed Delta table written via the
@@ -66,21 +68,21 @@ _CRED_SAFETY_MARGIN_S = 300  # refresh the token 5 min before it actually expire
 
 
 def enabled() -> bool:
-    """True only when the writeback feature is on. Every public fn no-ops (or
-    returns empty) when this is false, so the tier is genuinely inert when off."""
-    return bool(config.get_features().get("writeback"))
+    """Writeback (acknowledge/dismiss) is a BUILT-IN capability — it ships with the
+    app and is always on (no feature flag). Kept as a function so callers read
+    naturally; whether it can actually PERSIST is the separate `operational()`
+    check (which the /api/config gate + the ack endpoints use)."""
+    return True
 
 
 def operational() -> tuple[bool, str]:
-    """Whether writeback can ACTUALLY persist in the current config — separate
-    from `enabled()` (the flag). Prevents the silent-failure trap where writeback
+    """Whether writeback can ACTUALLY persist in the current config — the real gate
+    (writeback is always enabled). Prevents the silent-failure trap where writeback
     is on by default but, in live mode with the Delta backend, no writeback schema
     is configured (needs `gold_schema` or `FINOPS_WRITEBACK_SCHEMA`) and the app SP
     has no write grant there. Returns (ok, reason). The app surfaces this on
     /api/config so the UI can hide the ack controls with an honest note instead of
-    letting acks vanish. Demo + Lakebase are always operational when enabled."""
-    if not enabled():
-        return (False, "writeback feature is off")
+    letting acks vanish. Demo + Lakebase are always operational."""
     try:
         b = _backend()
     except Exception as e:  # noqa: BLE001
@@ -124,7 +126,12 @@ def _backend() -> str:
     else ⇒ delta — so a deployment WITHOUT Lakebase degrades cleanly."""
     from data.config import get_settings
     s = get_settings()
-    if not s.get("use_live"):
+    # Use the EFFECTIVE live state, not just the requested flag: when live is
+    # requested but no warehouse is configured yet, the app is actually serving
+    # DEMO data (the graceful-fallback state — see app.py), so writeback should use
+    # the in-memory demo store too, not attempt Delta. This keeps a bare local run
+    # (or an unconfigured deploy) from showing a spurious writeback-unavailable.
+    if not s.get("use_live") or not str(s.get("warehouse_id") or "").strip():
         return "demo"
     if (os.environ.get("PGHOST")                # bundle-native binding (preferred)
             or os.environ.get("FINOPS_LAKEBASE_INSTANCE")
@@ -708,20 +715,14 @@ if __name__ == "__main__":
     r = effective_status({"status": "acknowledged", "metric_at_ack": 0.0}, 5000.0, zero_base_floor=1000.0)
     assert r["reopened"] and not r["hidden"] and "materially" in r["reopen_reason"], r
 
-    # operational(): demo is always operational when the flag is on; feature-off
-    # is not operational. (Live+delta+no-schema is exercised via app config, not
-    # here, since it depends on env — this covers the pure-logic branches.)
-    # NB: pin USE_LIVE=false explicitly — the shipped default is now live, and this
-    # assertion is specifically the DEMO-mode branch (demo → backend='demo' → ok).
+    # operational(): writeback is a built-in (always enabled) — the only question is
+    # whether it can PERSIST. Demo mode always can (in-process store). Pin
+    # USE_LIVE=false so the backend resolves to 'demo' (the shipped default is live).
+    # (Live+delta+no-schema is exercised via app config, not here — it depends on env.)
     import os as _os
-    _os.environ["FINOPS_FEATURE_WRITEBACK"] = "true"
     _os.environ["USE_LIVE"] = "false"
     config.reset_cache()
     ok, reason = operational()
-    assert ok and reason == "", (ok, reason)  # demo mode (use_live false) → ok
-    # And feature-off → not operational, with a clear reason.
-    _os.environ["FINOPS_FEATURE_WRITEBACK"] = "false"
-    config.reset_cache()
-    ok2, reason2 = operational()
-    assert not ok2 and reason2, (ok2, reason2)
+    assert ok and reason == "", (ok, reason)  # demo mode → always operational
+    assert enabled() is True, "writeback is a built-in — enabled() must always be True"
     print("self-check OK")

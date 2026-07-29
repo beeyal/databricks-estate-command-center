@@ -31,7 +31,7 @@ flowchart LR
 
   subgraph API["3 · FASTAPI · app.py"]
     direction TB
-    CFG[config.yaml + env<br/>feature flags]
+    CFG[app.yaml env<br/>feature flags]
     EP["/api/* endpoints<br/>incl. /api/config"]
     DEMO[data/generate_demo.py<br/>seeded Acme demo]
     REC[data/recommender.py<br/>deterministic rules]
@@ -79,7 +79,7 @@ flowchart LR
   class GOLD store
 ```
 
-**Read left to right:** estate data (1) lands in Databricks **system tables** (2); FastAPI (3) reads either the seeded demo dataset *or* those system tables, enriches every row through the deterministic **recommender** and the catalogue-driven **hub**, and (in live mode) serves each payload from the nightly precomputed **gold Delta tables** so reads return in sub-second time without a warehouse spin-up; the React SPA (4) is served by the same process and fetches `/api/*`. A **feature-flag config layer** (`config.yaml` + env) governs which surfaces exist: the SPA fetches `/api/config` *first*, then conditionally mounts the **Data Quality** tab (`dqm`), the **Ask Genie** banner (`genie`), LLM rec narration (`ai_narration`), and the **acknowledge/ignore** controls (`writeback`) — each independently switchable off. Hidden features are **inert server-side** — the endpoint returns 404 and makes no Genie/model call when the flag is off.
+**Read left to right:** estate data (1) lands in Databricks **system tables** (2); FastAPI (3) reads either the seeded demo dataset *or* those system tables, enriches every row through the deterministic **recommender** and the catalogue-driven **hub**, and (in live mode) serves each payload from the nightly precomputed **gold Delta tables** so reads return in sub-second time without a warehouse spin-up; the React SPA (4) is served by the same process and fetches `/api/*`. A **feature-flag config layer** (env vars in `app.yaml`) governs which surfaces exist: the SPA fetches `/api/config` *first*, then conditionally mounts the **Data Quality** tab (`dqm`), the **Ask Genie** banner (`genie`), and LLM rec narration (`ai_narration`) — each independently switchable off (hidden features are **inert server-side** — the endpoint returns 404 and makes no Genie/model call). The **acknowledge/dismiss** controls are a built-in capability (always on), gated only by whether the writeback store can persist.
 
 ---
 
@@ -137,11 +137,11 @@ The **Access** principal directory, group membership, workspace assignments and 
 - **Config-first render.** The SPA fetches `/api/config` on boot and reads `features.{genie,dqm,ai_narration}` + `fx_rate` into Zustand before mounting the nav. The **Data Quality** tab and the **Ask Genie** banner are conditionally mounted from those flags; the USD/AUD toggle restates every `$` via `fx_rate`.
 - **State** via Zustand (`store/appStore.ts`); data fetching via a thin `api/client.ts` + `hooks/useApi.ts`; Ask Genie streams via a `useGenieStream`-style SSE hook. Dark by default, DM Sans, GitHub-dark surface with Databricks-red accent.
 
-### 5 · Feature-flag config layer (`config.yaml` + env → `/api/config`)
+### 5 · Feature-flag config layer (`app.yaml` env → `/api/config`)
 
-One config source, one precedence rule: **environment variable > `config.yaml` > built-in default** — so a customer flips a flag at deploy time without editing code. Four feature flags (`genie`, `dqm`, `writeback` on by default; `ai_narration` built-in default off, turned on by this repo's `config.yaml`), each independently switchable off. `app.py` resolves the flags at startup and:
+One config source, one precedence rule: **environment variable (`app.yaml`) > built-in default** — so a customer flips a flag at deploy time without editing code. Three feature flags (`genie`, `dqm` on by default; `ai_narration` built-in default off, turned on by this repo's `app.yaml`), each independently switchable off. (Acknowledge/dismiss is a built-in capability, not a flag.) `app.py` resolves the flags at startup and:
 
-- **`/api/genie/ask` returns 404 (and makes no Genie call)** when `features.genie` is false, **`/api/dqm` returns 404** when `features.dqm` is false, and **`/api/acks` returns 404** when `features.writeback` is false — hidden features are genuinely inert server-side, never merely unrendered (no stray Genie/model calls when disabled);
+- **`/api/genie/ask` returns 404 (and makes no Genie call)** when `features.genie` is false, **`/api/dqm` returns 404** when `features.dqm` is false — hidden features are genuinely inert server-side, never merely unrendered (no stray Genie/model calls when disabled). `/api/acks` is always available (writeback is built in); it returns records or a 503 if the store can't persist;
 - exposes the resolved flags and `fx_rate` on **`/api/config`** for the SPA to gate its own rendering.
 
 Any combination of the flags is valid; setting `FINOPS_FEATURE_*` to `"false"` in `app.yaml` ships any subset off. The **deterministic recommender, cost-attribution, and Genie-cost attribution are always on** — they call no model, so they are not gated as "AI features". Full detail in [`CUSTOMER_DEPLOYMENT.md`](CUSTOMER_DEPLOYMENT.md).

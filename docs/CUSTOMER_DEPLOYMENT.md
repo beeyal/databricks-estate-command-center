@@ -124,16 +124,17 @@ Every other value in `app.yaml` has a safe default and its comment says what bla
 The common ones:
 
 - **`FINOPS_CUSTOMER_NAME`** — the label in the app header. Change to your company (cosmetic).
-- **Feature toggles** (`FINOPS_FEATURE_GENIE` / `_AI_NARRATION` / `_DQM` / `_WRITEBACK`) —
-  all ship **on**. Set any to `"false"` to switch that surface off — it's hidden in the UI
-  **and** its API goes inert (no half-rendered tabs, and no model call is ever made). See the
-  table just below for exactly what each one removes.
-- **Acknowledge/dismiss storage** — on by default. **You don't pick a storage type here —
-  the deploy target does** (see Step ③): the recommended `-t customer` target uses a managed
-  Lakebase (Postgres) instance the bundle wires up for you (nothing to set); the
-  `-t customer-delta` fallback stores a tiny Delta table in your gold schema instead (leave
-  `FINOPS_WRITEBACK_SCHEMA` blank to reuse the gold schema). If the app can't write the state
-  it reports writeback **off** and hides the controls — it never silently drops a dismissal.
+- **Feature toggles** (`FINOPS_FEATURE_GENIE` / `_AI_NARRATION` / `_DQM`) — all ship **on**.
+  Set any to `"false"` to switch that surface off — it's hidden in the UI **and** its API
+  goes inert (no half-rendered tabs, and no model call is ever made). See the table just
+  below for exactly what each one removes.
+- **Acknowledge/dismiss is built in** (not a toggle — it always ships). You don't configure
+  it here; **where its state is stored is set by the deploy target** (see Step ③): the
+  recommended `-t customer` uses a managed Lakebase (Postgres) instance the bundle wires up
+  for you (nothing to set); `-t customer-delta` stores it in a tiny Delta table in your gold
+  schema instead (leave `FINOPS_WRITEBACK_SCHEMA` blank to reuse the gold schema, and grant
+  the app SP write on it — Step ④). If it can't persist, the app hides the controls with an
+  honest note — it never silently drops a dismissal.
 - **Business-unit / team reporting** (`FINOPS_WORKSPACE_BU_TABLE`, `FINOPS_USER_TEAM_TABLE`)
   — blank hides those columns (Step ⑥ if you want them).
 
@@ -145,7 +146,8 @@ The common ones:
 | **`FINOPS_FEATURE_AI_NARRATION`** | The **LLM-written wording** on recommendations, and the Query Advisor's **AI SQL-rewrite** suggestion. | **All recommendations still appear**, with clear rule-based explanations + next steps — just not LLM-phrased. Query Advisor still finds & ranks the queries. |
 | **Both of the above** *(a "no-AI" deploy)* | Only the two rows above. **No LLM endpoint is needed at all** — nothing ever calls a model, so no data-residency/endpoint setup. | A **fully-featured cost & governance console**: every tab, all cost/usage/access/governance data, and the full priority-ranked recommendation engine. |
 | **`FINOPS_FEATURE_DQM`** | The **Data Quality** tab (Lakehouse Monitoring). `/api/dqm` goes inert. | All 13 other tabs. *(Turn this off if you don't use Lakehouse Monitoring — then you can skip its grant in Step ④.)* |
-| **`FINOPS_FEATURE_WRITEBACK`** | The **acknowledge / dismiss** controls on alerts (so you can't snooze a known-OK finding). | Everything is otherwise identical — the app is simply strictly read-only. |
+
+*(Acknowledge / dismiss is **built in** — there's no flag to turn it off. The only related choice is where its state is stored, set by the deploy target in Step ③.)*
 
 > [!NOTE]
 > **FYI** — the deterministic recommender, cost attribution, and Genie-cost view are **always
@@ -279,10 +281,11 @@ that don't apply to you**; most deployments need none of them.
   SP as *Can Run*). If you leave `GENIE_SPACE_ID` blank (the default) the deploy auto-creates
   a Space the app owns — no grant needed.
 - **`-t customer-delta` target only** — the recommended `-t customer` (Lakebase) target
-  needs none of this. On `customer-delta`, grant the app SP `CREATE`/`MODIFY` on its
-  writeback schema: `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<app-sp>\`;`
-  (that schema is `FINOPS_GOLD_SCHEMA`, or `FINOPS_WRITEBACK_SCHEMA` if you set one). Skip if
-  `FINOPS_FEATURE_WRITEBACK: "false"`.
+  needs none of this. On `customer-delta`, acknowledge/dismiss state goes in a Delta table,
+  so grant the app SP `CREATE`/`MODIFY` on its writeback schema:
+  `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<app-sp>\`;` (that schema is
+  `FINOPS_GOLD_SCHEMA`, or `FINOPS_WRITEBACK_SCHEMA` if you set one). Without it the app just
+  hides the ack controls — it never loses a dismissal silently.
 
 </details>
 

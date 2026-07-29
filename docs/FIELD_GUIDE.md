@@ -104,8 +104,9 @@ ai_narration's built-in default is off but this repo's config turns it on):
 FINOPS_FEATURE_GENIE: "false"          # hide the Ask Genie banner
 FINOPS_FEATURE_AI_NARRATION: "false"   # drop the LLM rationale on recommendations
 FINOPS_FEATURE_DQM: "false"            # hide the Data Quality tab
-FINOPS_FEATURE_WRITEBACK: "false"      # strictly read-only: hide acknowledge/ignore controls
 ```
+(Acknowledge/dismiss is built in — no flag. Its storage is set by the deploy target:
+`-t customer` = Lakebase, `-t customer-delta` = Delta.)
 
 | Variant | `genie` | `ai_narration` | `dqm` | Tabs | For |
 |---|:--:|:--:|:--:|:--:|---|

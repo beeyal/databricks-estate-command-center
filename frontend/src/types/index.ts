@@ -23,8 +23,10 @@ export interface Features {
   genie: boolean;
   ai_narration: boolean;
   dqm: boolean;
-  // Optional Lakebase-backed writeback tier (acknowledge/ignore alerts,
-  // editable BU mapping, budgets). Off ⇒ controls hidden + endpoints 404.
+  // NOT a feature toggle — writeback (acknowledge/dismiss) is built in. This is its
+  // OPERATIONAL STATUS from /api/config: true when the store can persist, false when
+  // it can't (live + Delta backend with no writable schema/grant). The UI shows the
+  // ack controls only when true.
   writeback?: boolean;
 }
 
