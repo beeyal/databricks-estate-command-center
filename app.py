@@ -242,7 +242,8 @@ def _self_provision() -> None:
                 genie=bool(_FEATURES["genie"]),
                 ai_narration=bool(_FEATURES["ai_narration"]),
                 llm_endpoint=str(_SETTINGS["llm_endpoint"]),
-                source_path=SOURCE_PATH, run_as_sp=JOB_RUN_AS)
+                source_path=SOURCE_PATH, run_as_sp=JOB_RUN_AS,
+                gold_schema=GOLD_SCHEMA)
         except Exception:  # noqa: BLE001 - provisioning is best-effort
             pass
 

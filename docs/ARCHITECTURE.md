@@ -152,7 +152,7 @@ Any combination of the flags is valid; setting `FINOPS_FEATURE_*` to `"false"` i
 sequenceDiagram
   participant UI as Ask Genie banner
   participant API as FastAPI /api/genie/ask
-  participant G as Genie Conversation API<br/>(auto-provisioned Space, 9 system tables)
+  participant G as Genie Conversation API<br/>(auto-provisioned Space: cost metric view + 9 system tables)
   UI->>API: POST question (EventSource / fetch stream)
   alt USE_LIVE (live)
     API->>G: create/continue conversation (real Genie)
@@ -168,7 +168,7 @@ sequenceDiagram
   UI->>UI: render prose + follow-up chips + caveat
 ```
 
-Demo vs live is gated on **`USE_LIVE`**, not on whether `genie_space_id` is set. In **live** the app calls the real Genie Conversation API against a Space that is **auto-provisioned + auto-discovered by title** (curated over 9 cost/usage/ops system tables — see the [README Ask Genie section](../README.md#ask-genie)), so no manual `genie_space_id` is needed; if a Space is unavailable or Genie can't answer, it says so honestly and **never** serves a canned answer. The seeded `demo answer` (with the list-price caveat) appears **only in demo mode**.
+Demo vs live is gated on **`USE_LIVE`**, not on whether `genie_space_id` is set. In **live** the app calls the real Genie Conversation API against a Space that is **auto-provisioned + auto-discovered by title** (grounded on a governed cost metric view + 9 cost/usage/ops system tables, with sample questions + worked example SQL — see the [README Ask Genie section](../README.md#ask-genie)), so no manual `genie_space_id` is needed; if a Space is unavailable or Genie can't answer, it says so honestly and **never** serves a canned answer. The seeded `demo answer` (with the list-price caveat) appears **only in demo mode**.
 
 ### 7 · Data Quality — Lakehouse Monitoring source (`features.dqm`)
 

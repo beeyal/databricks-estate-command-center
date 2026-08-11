@@ -53,9 +53,210 @@ GENIE_DESCRIPTION = (
     "Command Center app."
 )
 
+# --- Governed cost metric view (the #1 accuracy lever) --------------------------------
+# system.billing.usage is in DBUs; the DOLLAR figure requires a join to list_prices over
+# a SKU + price-validity-window (price_start_time/price_end_time) — the single hardest
+# thing for Genie to reconstruct on the raw tables, and the most common silent-wrong-$
+# answer. We encapsulate it in a governed UC metric view (built in the app's gold schema
+# by build_cost_metric_view) so Genie calls MEASURE(spend_usd) GROUP BY dims and always
+# gets the same, correct dollars — the exact list-cost calc the app's own queries use
+# (usage_quantity * pricing.default, LEFT JOIN so a missing price never drops usage).
+COST_MV_NAME = "mv_estate_cost"          # created inside the gold schema
+COST_BASE_VIEW = "estate_cost_base"      # usage×price base view the metric view sits on
+
+
+def _cost_base_view_sql(gold_schema: str) -> str:
+    """Row-level usage joined to its effective list price → list_cost_usd. LEFT JOIN so a
+    missing price row degrades cost to 0 rather than dropping the usage row (matches the
+    app's queries.sql). Flattens the struct fields Genie stumbles on (run_as, warehouse_id,
+    cluster_id live inside usage_metadata/identity_metadata structs)."""
+    return f"""CREATE OR REPLACE VIEW {gold_schema}.{COST_BASE_VIEW} AS
+SELECT
+  u.workspace_id,
+  u.sku_name,
+  u.billing_origin_product,
+  u.usage_unit,
+  u.usage_date,
+  u.usage_quantity,
+  u.usage_quantity * COALESCE(lp.pricing.default, 0)  AS list_cost_usd,
+  u.identity_metadata.run_as                          AS run_as,
+  u.usage_metadata.cluster_id                         AS cluster_id,
+  u.usage_metadata.warehouse_id                       AS warehouse_id_meta,
+  u.usage_metadata.job_id                             AS job_id
+FROM system.billing.usage u
+LEFT JOIN system.billing.list_prices lp
+  ON u.sku_name = lp.sku_name
+ AND u.usage_end_time >= lp.price_start_time
+ AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)"""
+
+
+def _cost_metric_view_sql(gold_schema: str) -> str:
+    """Governed cost metric view over the base view. version 1.1 YAML (DBR 17.2+).
+    Dimensions Genie can slice by; measures it wraps in MEASURE(). Synonyms teach the
+    business vocabulary so the prose instruction can stay short."""
+    fq = f"{gold_schema}.{COST_MV_NAME}"
+    yaml = f"""  version: 1.1
+  comment: >-
+    Estate cost & usage — the governed dollar layer over system.billing.usage joined to
+    list_prices (list cost). Slice spend and DBUs by workspace, SKU, product, day, or the
+    principal that ran it. Always wrap measures in MEASURE(...) and GROUP BY ALL. Synonyms:
+    spend = cost = dollars = list_cost_usd; DBU = usage; product = billing_origin_product.
+  source: {gold_schema}.{COST_BASE_VIEW}
+  dimensions:
+    - name: workspace_id
+      expr: workspace_id
+      comment: "Databricks workspace id (numeric string). Join to workspaces_latest for the workspace NAME."
+    - name: sku_name
+      expr: sku_name
+      comment: "Billing SKU, e.g. ENTERPRISE_SQL_COMPUTE, JOBS_SERVERLESS. Synonyms: sku, rate, line item."
+    - name: product
+      expr: billing_origin_product
+      comment: >-
+        The Databricks product the spend came from (SQL, JOBS, MODEL_SERVING, APPS,
+        LAKEBASE, VECTOR_SEARCH, …). Synonyms: product, workload, service, feature area.
+    - name: usage_date
+      expr: usage_date
+      comment: "Calendar date of usage. Filter with usage_date >= dateadd(day, -N, current_date())."
+    - name: run_as
+      expr: run_as
+      comment: >-
+        The principal (user or service principal) the usage ran as, where known. Synonyms:
+        user, owner, who, principal, run as. NULL for usage with no attributable identity.
+  measures:
+    - name: spend_usd
+      expr: SUM(list_cost_usd)
+      comment: >-
+        Total LIST cost in USD (usage_quantity × list price). Synonyms: spend, cost, dollars,
+        $, bill, list cost. This is list price, not a discounted/contract rate.
+    - name: dbus
+      expr: SUM(usage_quantity)
+      comment: "Total DBUs consumed. Synonyms: DBUs, usage, consumption, compute units."
+"""
+    return f"CREATE OR REPLACE VIEW {fq} WITH METRICS LANGUAGE YAML AS $$\n{yaml}$$"
+
+
+def build_cost_metric_view(warehouse_id: str, gold_schema: str) -> dict[str, Any]:
+    """Create the cost base view + governed cost metric view in the gold schema. Best-effort
+    and non-fatal (mirrors run_gold): a metastore without DBR 17.2 / metric-view support just
+    means Genie grounds on the raw tables (still works, less deterministic on $). Returns
+    {ok, metric_view[, error]}."""
+    from . import live  # local import: provision is imported in contexts without a warehouse
+    if not warehouse_id or not gold_schema or not live._SCHEMA_RE.match(gold_schema):
+        return {"ok": False, "metric_view": "", "error": "no warehouse_id / valid gold_schema"}
+    fq = f"{gold_schema}.{COST_MV_NAME}"
+    try:
+        live._run(warehouse_id, f"CREATE SCHEMA IF NOT EXISTS {gold_schema}", "genie: ensure gold schema")
+        live._run(warehouse_id, _cost_base_view_sql(gold_schema), "genie: cost base view")
+        live._run(warehouse_id, _cost_metric_view_sql(gold_schema), "genie: cost metric view")
+        return {"ok": True, "metric_view": fq}
+    except Exception as e:  # noqa: BLE001 — non-fatal; grounding falls back to raw tables
+        return {"ok": False, "metric_view": fq, "error": str(e)[:200]}
+
+
+# Short, high-signal instruction block (playbook: text instructions are the LAST layer —
+# the metric view carries the vocabulary via synonyms, so this only reinforces the few
+# things metadata can't: prefer the metric view for $, the struct-field gotchas on the raw
+# tables, and time-window filtering). ONE combined block (API allows at most one).
+def _text_instructions(cost_mv: str) -> list[str]:
+    return [
+        f"For any COST or SPEND question (dollars by workspace / SKU / product / user / day), "
+        f"PREFER the governed metric view {cost_mv}: SELECT <dims>, MEASURE(spend_usd), "
+        f"MEASURE(dbus) FROM {cost_mv} GROUP BY ALL. It already joins usage to list_prices over "
+        f"the price-validity window, so you never reconstruct that join. Filter time with "
+        f"usage_date >= dateadd(day, -N, current_date()). Dollars are LIST cost.",
+        "On the RAW tables, mind the structs: in system.query.history the warehouse is "
+        "compute.warehouse_id (not warehouse_id); in system.billing.usage the identity is "
+        "identity_metadata.run_as and the cluster/warehouse/job are under usage_metadata.*. "
+        "Join system.access.workspaces_latest on workspace_id to show workspace NAMES not ids.",
+        "Vocabulary: spend = cost = dollars = list_cost_usd (USD); DBU = usage_quantity = "
+        "consumption; product = billing_origin_product (SQL, JOBS, MODEL_SERVING, APPS, …). "
+        "system.billing.usage is DBUs only — dollars ALWAYS need list_prices (use the metric view).",
+    ]
+
+
+def _sample_questions() -> list[str]:
+    return [
+        "What did we spend in the last 30 days, by product?",
+        "Which 10 workspaces had the highest spend last month?",
+        "Show daily spend for the last 30 days.",
+        "Who are the top 10 users by spend in the last 30 days?",
+        "What's our serverless vs classic DBU split?",
+        "Which SKUs cost the most this month?",
+        "How many queries ran in the last 7 days, by statement type?",
+        "Which warehouses ran the most queries last week?",
+        "What is the month-over-month change in total spend?",
+        "Which jobs consumed the most DBUs recently?",
+    ]
+
+
+def _example_sqls(cost_mv: str) -> list[tuple[str, str]]:
+    """(question, sql) — each verified against live system tables + the metric view before
+    shipping. Teaches the MEASURE()/GROUP BY ALL pattern and the raw-table struct paths."""
+    return [
+        ("What did we spend in the last 30 days, by product?",
+         f"SELECT product, MEASURE(spend_usd) AS spend_usd, MEASURE(dbus) AS dbus "
+         f"FROM {cost_mv} WHERE usage_date >= dateadd(day, -30, current_date()) "
+         f"GROUP BY ALL ORDER BY spend_usd DESC"),
+        ("Which 10 workspaces had the highest spend last month?",
+         f"SELECT workspace_id, MEASURE(spend_usd) AS spend_usd FROM {cost_mv} "
+         f"WHERE usage_date >= dateadd(day, -30, current_date()) GROUP BY ALL "
+         f"ORDER BY spend_usd DESC LIMIT 10"),
+        ("Show daily spend for the last 30 days.",
+         f"SELECT usage_date, MEASURE(spend_usd) AS spend_usd FROM {cost_mv} "
+         f"WHERE usage_date >= dateadd(day, -30, current_date()) GROUP BY ALL ORDER BY usage_date"),
+        ("Who are the top 10 users by spend in the last 30 days?",
+         f"SELECT run_as, MEASURE(spend_usd) AS spend_usd FROM {cost_mv} "
+         f"WHERE usage_date >= dateadd(day, -30, current_date()) AND run_as IS NOT NULL "
+         f"GROUP BY ALL ORDER BY spend_usd DESC LIMIT 10"),
+        ("How many queries ran in the last 7 days, by statement type?",
+         "SELECT statement_type, count(*) AS queries FROM system.query.history "
+         "WHERE start_time >= dateadd(day, -7, current_date()) GROUP BY ALL ORDER BY queries DESC"),
+        ("Which warehouses ran the most queries last week?",
+         "SELECT compute.warehouse_id AS warehouse_id, count(*) AS queries "
+         "FROM system.query.history WHERE start_time >= dateadd(day, -7, current_date()) "
+         "AND compute.warehouse_id IS NOT NULL GROUP BY ALL ORDER BY queries DESC LIMIT 10"),
+    ]
+
+
+def _stable_id(*parts: str) -> str:
+    """Deterministic 32-hex id from content, so re-runs keep the SAME id for the same
+    question/instruction/SQL (the API keys items by id — random ids churn the space)."""
+    import hashlib
+    return hashlib.sha256("||".join(parts).encode()).hexdigest()[:32]
+
+
+def build_serialized_space(tables: list[str], cost_mv: str = "") -> str:
+    """Build serialized_space in the CANONICAL Genie API schema (validated against the live
+    create API): data_sources.tables sorted by identifier; config.sample_questions[{id,
+    question:[str]}]; instructions.text_instructions[{id, content:[str]}] (AT MOST ONE);
+    instructions.example_question_sqls[{id, question:[str], sql:[str]}] sorted by id. Every
+    string field is an ARRAY. When cost_mv is given we also ground it and add the metric-view
+    instructions + example SQLs; without it (metric view unavailable) we still ship the
+    raw-table struct guidance + history examples so the space is useful either way."""
+    desired = sorted(set(t for t in ([cost_mv] if cost_mv else []) + list(tables) if t))
+    body: dict[str, Any] = {
+        "version": 2,
+        "data_sources": {"tables": [{"identifier": t} for t in desired]},
+        "config": {"sample_questions": sorted(
+            ({"id": _stable_id("q", q), "question": [q]} for q in _sample_questions()),
+            key=lambda e: e["id"])},
+    }
+    instructions: dict[str, Any] = {}
+    if cost_mv:
+        # text_instructions: AT MOST ONE item — join the bullets into one \n block.
+        joined = "\n".join(f"- {t}" for t in _text_instructions(cost_mv))
+        instructions["text_instructions"] = [{"id": _stable_id("ti", joined), "content": [joined]}]
+        instructions["example_question_sqls"] = sorted(
+            ({"id": _stable_id("sql", q, s), "question": [q], "sql": [s]} for q, s in _example_sqls(cost_mv)),
+            key=lambda e: e["id"])
+    if instructions:
+        body["instructions"] = instructions
+    return json.dumps(body)
+
 
 def ensure_genie_space(warehouse_id: str, tables: list[str] | None = None,
-                       title: str = GENIE_TITLE, existing_space_id: str = "") -> dict[str, Any]:
+                       title: str = GENIE_TITLE, existing_space_id: str = "",
+                       cost_mv: str = "") -> dict[str, Any]:
     """Create the FinOps Genie Space if it doesn't already exist.
 
     Idempotency source of truth is ``existing_space_id`` (the id this job
@@ -63,13 +264,13 @@ def ensure_genie_space(warehouse_id: str, tables: list[str] | None = None,
     exists we reuse it. We do NOT rely on list_spaces for the dedupe decision —
     it is eventually consistent, so a just-created space isn't returned promptly
     and title-scans would spawn duplicates on every run. Returns
-    {"ok", "created", "space_id"} (+ "error" on failure)."""
+    {"ok", "created", "space_id"} (+ "error" on failure).
+
+    cost_mv (fully-qualified metric view) grounds + teaches the governed dollar layer;
+    pass "" to ground only the raw tables (still valid)."""
     tables = tables or DEFAULT_GENIE_TABLES
-    desired = sorted(set(tables))
-    serialized = json.dumps({
-        "version": 2,
-        "data_sources": {"tables": [{"identifier": t} for t in desired]},
-    })
+    desired = sorted(set((([cost_mv] if cost_mv else []) + list(tables))))
+    serialized = build_serialized_space(tables, cost_mv)
 
     def _sync_tables(sid: str) -> None:
         """Update a reused space's table set to the desired list if it drifted —
@@ -223,12 +424,17 @@ def ensure_jobs(source_path: str, warehouse_id: str, ingest_schema: str, *,
 def run_provision(warehouse_id: str, ingest_schema: str, *, genie: bool = True,
                   ai_narration: bool = False,
                   llm_endpoint: str = "databricks-claude-sonnet-4-6",
-                  source_path: str = "", run_as_sp: str = "") -> dict[str, Any]:
+                  source_path: str = "", run_as_sp: str = "",
+                  gold_schema: str = "") -> dict[str, Any]:
     """Ensure the AI features + jobs are provisioned and persist the result into
     ``<ingest_schema>.finops_admin`` (key 'provision') so the app can read the
     auto-created genie_space_id. Idempotent — reuses the previously-persisted
     Genie Space id and skips jobs that already exist. Safe to run at deploy time,
-    daily from the job, and on app startup (UI-only path)."""
+    daily from the job, and on app startup (UI-only path).
+
+    gold_schema (catalog.schema) is where the governed cost metric view is built; if
+    given, Genie is grounded on it + taught the MEASURE() dollar pattern. Falls back to
+    the ingest_schema, then to raw-table-only grounding if neither is usable."""
     from data import live
 
     payload: dict[str, Any] = {}
@@ -236,7 +442,16 @@ def run_provision(warehouse_id: str, ingest_schema: str, *, genie: bool = True,
     prior_id = str(((prior["payload"] if prior else {} or {}).get("genie") or {}).get("space_id") or "")
 
     if genie:
-        payload["genie"] = ensure_genie_space(warehouse_id, existing_space_id=prior_id)
+        # Build the governed cost metric view first (best-effort), then ground Genie on it.
+        # Prefer the gold schema; fall back to the ingest schema (both are app-owned + writable).
+        mv_schema = gold_schema or ingest_schema
+        cost_mv = ""
+        if mv_schema:
+            mv_res = build_cost_metric_view(warehouse_id, mv_schema)
+            payload["cost_metric_view"] = mv_res
+            if mv_res.get("ok"):
+                cost_mv = mv_res["metric_view"]
+        payload["genie"] = ensure_genie_space(warehouse_id, existing_space_id=prior_id, cost_mv=cost_mv)
     if ai_narration:
         payload["llm"] = ensure_llm_endpoint(llm_endpoint)
     # Create the daily admin-sync job if a source path is known (UI-only path —
@@ -274,7 +489,8 @@ if __name__ == "__main__":  # deploy-time / manual entry: python -m data.provisi
     llm = os.environ.get("FINOPS_LLM_ENDPOINT", "databricks-claude-sonnet-4-6")
     src = os.environ.get("FINOPS_SOURCE_PATH", "")
     run_as = os.environ.get("FINOPS_JOB_RUN_AS", "")
+    gold = os.environ.get("FINOPS_GOLD_SCHEMA", "")
     print("provisioning →", schema or "(no ingest schema — not persisted)")
     for k, v in run_provision(wh, schema, genie=genie, ai_narration=ai, llm_endpoint=llm,
-                              source_path=src, run_as_sp=run_as).items():
+                              source_path=src, run_as_sp=run_as, gold_schema=gold).items():
         print(f"  {k:6} {v}")

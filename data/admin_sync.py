@@ -285,7 +285,8 @@ def run_admin_sync(warehouse_id: str, schema: str) -> dict[str, Any]:
             warehouse_id, schema,
             genie=str(os.environ.get("FINOPS_FEATURE_GENIE", "true")).lower() == "true",
             ai_narration=str(os.environ.get("FINOPS_FEATURE_AI_NARRATION", "false")).lower() == "true",
-            llm_endpoint=os.environ.get("FINOPS_LLM_ENDPOINT", "databricks-claude-sonnet-4-6"))
+            llm_endpoint=os.environ.get("FINOPS_LLM_ENDPOINT", "databricks-claude-sonnet-4-6"),
+            gold_schema=os.environ.get("FINOPS_GOLD_SCHEMA", ""))
         if prov:
             status["provision"] = {k: v.get("ok") for k, v in prov.items()}
     except Exception as e:  # noqa: BLE001 - provisioning is best-effort, never fatal to the sync
