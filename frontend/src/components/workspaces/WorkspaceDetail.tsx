@@ -146,6 +146,14 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
         <StatTile label="Serverless" value={fmtPct(d.serverless_share)} info="Share of this workspace's spend on serverless SKUs versus classic compute." />
         <StatTile label="Clusters" value={String(d.num_clusters)} info="Number of active all-purpose and job clusters seen in this workspace." />
         <StatTile label="Warehouses" value={String(d.num_warehouses)} info="Number of active Databricks SQL warehouses serving queries in this workspace." />
+        {d.genie && d.genie.total_dbus > 0 && (
+          <StatTile
+            label="Genie / mo"
+            value={fmtMoney(d.genie.total_list_cost_usd, cur, { compact: true })}
+            tone="info"
+            info={`Genie spend this month at list price across ${d.genie.num_surfaces} surface(s), ${d.genie.distinct_users} user(s). Paid portion (above the free allowance): ${fmtMoney(d.genie.paid_list_cost_usd, cur, { compact: true })}.`}
+          />
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

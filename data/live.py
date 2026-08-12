@@ -77,27 +77,21 @@ def _client():  # lazy import so demo mode never needs the SDK
     return WorkspaceClient()
 
 
-def _run(warehouse_id: str, sql: str, source: str) -> list[dict[str, Any]]:
-    """Execute one read-only statement and return rows as dicts. Fail-closed."""
-    if not warehouse_id:
-        raise LiveError("warehouse", "no DATABRICKS_WAREHOUSE_ID configured for live mode")
-    w = _client()
-    try:
-        resp = w.statement_execution.execute_statement(
-            warehouse_id=warehouse_id, statement=sql, wait_timeout="30s",
-        )
-    except Exception as e:
-        raise LiveError(source, f"query failed to execute: {e}")
+# INLINE results are capped by the Statement Execution API at 25 MiB — a big
+# estate-wide scan (50k job runs, a wide grant graph) trips this with
+# "Inline byte limit exceeded". When it does, we transparently re-run the SAME
+# statement with EXTERNAL_LINKS disposition, which streams the full result via
+# presigned URLs and has no such cap. Substring the API uses in that error:
+_INLINE_LIMIT_MARKERS = ("inline byte limit", "disposition=inline", "result size of at most")
 
-    # Poll to completion. The synchronous window is 30-50s, but estate-wide
-    # billing scans on a large account can take longer — poll rather than
-    # 503 at the first timeout. Cap so a genuinely stuck query still fails
-    # closed (never hangs the request, never fakes data).
+
+def _poll_to_success(w, resp, source: str):
+    """Poll a submitted statement to SUCCEEDED (or fail closed). Returns the final response."""
     deadline = time.time() + (_BATCH_MAX_WAIT_SECONDS if _BATCH else _MAX_WAIT_SECONDS)
     while True:
         state_str = getattr(getattr(resp.status, "state", None), "value", str(getattr(resp.status, "state", "")))
         if state_str == "SUCCEEDED":
-            break
+            return resp
         if state_str in ("FAILED", "CANCELED", "CLOSED"):
             msg = getattr(getattr(resp.status, "error", None), "message", "") or state_str
             raise LiveError(source, f"query did not succeed ({state_str}): {msg}")
@@ -109,6 +103,28 @@ def _run(warehouse_id: str, sql: str, source: str) -> list[dict[str, Any]]:
             resp = w.statement_execution.get_statement(resp.statement_id)
         except Exception as e:  # transient SDK/network error → fail-closed as LiveError, not a raw 500
             raise LiveError(source, f"polling failed: {e}")
+
+
+def _run(warehouse_id: str, sql: str, source: str) -> list[dict[str, Any]]:
+    """Execute one read-only statement and return rows as dicts. Fail-closed.
+
+    Tries INLINE first (cheapest path); on the API's inline byte-limit error,
+    retries with EXTERNAL_LINKS so large results still return complete."""
+    if not warehouse_id:
+        raise LiveError("warehouse", "no DATABRICKS_WAREHOUSE_ID configured for live mode")
+    w = _client()
+    try:
+        resp = w.statement_execution.execute_statement(
+            warehouse_id=warehouse_id, statement=sql, wait_timeout="30s",
+        )
+        resp = _poll_to_success(w, resp, source)
+    except LiveError as e:
+        # Inline results are capped; fall back to EXTERNAL_LINKS for the same SQL.
+        if any(m in str(e).lower() for m in _INLINE_LIMIT_MARKERS):
+            return _run_external_links(w, warehouse_id, sql, source)
+        raise
+    except Exception as e:
+        raise LiveError(source, f"query failed to execute: {e}")
 
     manifest = resp.manifest
     result = resp.result
@@ -139,6 +155,58 @@ def _run(warehouse_id: str, sql: str, source: str) -> list[dict[str, Any]]:
     # also incomplete — fail closed rather than serve a truncated total.
     if nxt is not None:
         raise LiveError(source, f"result exceeded the {chunks}-chunk paging cap — refine the query window")
+    return rows
+
+
+def _run_external_links(w, warehouse_id: str, sql: str, source: str) -> list[dict[str, Any]]:
+    """Re-run a statement with EXTERNAL_LINKS disposition and stream the full
+    result from presigned URLs (no inline size cap). JSON_ARRAY format → each
+    link yields a list-of-lists we zip against the manifest columns."""
+    import json as _json
+    import urllib.request
+    from databricks.sdk.service.sql import Disposition, Format
+
+    try:
+        resp = w.statement_execution.execute_statement(
+            warehouse_id=warehouse_id, statement=sql, wait_timeout="30s",
+            disposition=Disposition.EXTERNAL_LINKS, format=Format.JSON_ARRAY,
+        )
+        resp = _poll_to_success(w, resp, source)
+    except LiveError:
+        raise
+    except Exception as e:
+        raise LiveError(source, f"query failed to execute (external links): {e}")
+
+    manifest = resp.manifest
+    cols = [c.name for c in manifest.schema.columns] if manifest and manifest.schema else []
+
+    def _fetch(url: str) -> list:
+        # Presigned URLs are pre-authenticated — no auth header (and adding one
+        # can cause the object store to reject the request). Fail closed on error.
+        with urllib.request.urlopen(url, timeout=60) as fh:  # noqa: S310 (trusted DBSQL-issued URL)
+            return _json.loads(fh.read().decode("utf-8")) or []
+
+    rows: list[dict[str, Any]] = []
+    stmt_id = resp.statement_id
+    result = resp.result
+    chunks = 0
+    while result is not None:
+        for link in (getattr(result, "external_links", None) or []):
+            url = getattr(link, "external_link", None)
+            if not url:
+                continue
+            for row in _fetch(url):
+                rows.append(dict(zip(cols, row)))
+        nxt = getattr(result, "next_chunk_index", None)
+        if nxt is None:
+            break
+        chunks += 1
+        if chunks >= 500:
+            raise LiveError(source, f"external-links result exceeded the {chunks}-chunk cap — refine the query window")
+        try:
+            result = w.statement_execution.get_statement_result_chunk_n(stmt_id, nxt)
+        except Exception as e:  # noqa: BLE001
+            raise LiveError(source, f"external-links paging failed after {chunks} chunk(s): {e}")
     return rows
 
 
@@ -963,6 +1031,23 @@ def workspace_detail_live(warehouse_id: str, workspace_id: str) -> dict[str, Any
         for d in (cost_drivers.get("drivers") or [])
     ]
     tops = _ws_top_lists(warehouse_id, workspace_id)
+    # Genie spend for THIS workspace. Scope by workspace_id (not name): the raw
+    # id always matches the billing rows, whereas the friendly name only resolves
+    # when system.access.workspaces_latest is granted — scoping by name there gave
+    # a false "$0 / no billable Genie spend" in the drill-down. Fail-soft to None.
+    genie: dict[str, Any] | None = None
+    try:
+        gsum = (genie_cost_live(warehouse_id, workspace_id) or {}).get("summary", {})
+        if gsum:
+            genie = {
+                "total_list_cost_usd": gsum.get("total_list_cost_usd", 0),
+                "paid_list_cost_usd": gsum.get("paid_list_cost_usd", 0),
+                "total_dbus": gsum.get("total_dbus", 0),
+                "distinct_users": gsum.get("distinct_users", 0),
+                "num_surfaces": gsum.get("num_surfaces", 0),
+            }
+    except Exception:  # noqa: BLE001 — drill-down must render even if Genie read fails
+        genie = None
     return {
         **rec,
         "product_mix": product_mix,
@@ -971,6 +1056,7 @@ def workspace_detail_live(warehouse_id: str, workspace_id: str) -> dict[str, Any
         "top_jobs": tops.get("top_jobs", []),
         "top_warehouses": tops.get("top_warehouses", []),
         "cost_drivers": cost_drivers,
+        "genie": genie,
         "detail_estimated": True,
     }
 
@@ -996,11 +1082,25 @@ def _ws_top_lists(warehouse_id: str, ws_id: str) -> dict[str, list[dict[str, Any
     except Exception:
         pass
     try:
+        # Resolve job_id → human-readable name via system.lakeflow.jobs. That table
+        # is SCD (a row per job version), so dedupe to the latest name per
+        # (workspace_id, job_id) before joining, or the SUM would fan out across
+        # versions. Fall back to the id string when the name can't be resolved.
+        job_price = ("LEFT JOIN system.billing.list_prices lp ON u.cloud=lp.cloud AND u.sku_name=lp.sku_name "
+             "AND u.usage_start_time>=lp.price_start_time AND (lp.price_end_time IS NULL OR u.usage_start_time<lp.price_end_time) "
+             "LEFT JOIN jn j ON CAST(u.usage_metadata.job_id AS STRING)=CAST(j.job_id AS STRING) "
+             "AND CAST(u.workspace_id AS STRING)=CAST(j.workspace_id AS STRING)")
         jr = _run(warehouse_id,
-            "SELECT CAST(u.usage_metadata.job_id AS STRING) jid, "
-            f"SUM(u.usage_quantity*lp.pricing.effective_list.default) usd {base} "
+            "WITH jn AS (SELECT workspace_id, job_id, name FROM system.lakeflow.jobs "
+            "  QUALIFY row_number() OVER (PARTITION BY workspace_id, job_id ORDER BY change_time DESC)=1) "
+            "SELECT CAST(u.usage_metadata.job_id AS STRING) jid, any_value(j.name) name, "
+            "SUM(u.usage_quantity*lp.pricing.effective_list.default) usd "
+            f"FROM system.billing.usage u {job_price} WHERE CAST(u.workspace_id AS STRING)='{sid}' "
+            "AND u.usage_date>=date_trunc('MONTH',current_date()) "
             "AND u.usage_metadata.job_id IS NOT NULL GROUP BY 1 ORDER BY usd DESC LIMIT 6", "ws top jobs")
-        out["top_jobs"] = [{"job": str(r.get("jid") or ""), "spend_usd_month": round(_f(r.get("usd")))} for r in jr if _f(r.get("usd")) > 0]
+        out["top_jobs"] = [{"job": str(r.get("name") or r.get("jid") or ""),
+                            "job_id": str(r.get("jid") or ""),
+                            "spend_usd_month": round(_f(r.get("usd")))} for r in jr if _f(r.get("usd")) > 0]
     except Exception:
         pass
     try:

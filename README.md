@@ -461,19 +461,9 @@ Demo mode (`USE_LIVE=false`, the default) needs **nothing** — no warehouse, no
 
 The **Access** grant graph (principals · grants · risks) and drill-downs read live from `system.information_schema.*_privileges`. Group membership, workspace assignments, entitlements and PAT inventory come from the account **SCIM / Groups** + **workspace-assignments** + **token-management** REST APIs — not SQL — so they're pulled by the daily **`finops_admin_sync`** job into the Delta **`<ingest_schema>.finops_admin` table** and the app reads them from there (with a "Last refreshed" time). See `docs/ARCHITECTURE.md`.
 
-The last three rows are **only** needed for the corresponding feature flag: DQM reads need the monitor metadata + the `DATA_QUALITY_MONITORING` billing line; Ask Genie needs the app SP to be able to **create / list Genie Spaces** (for auto-provision + title discovery) and `CAN RUN` on the Space, plus `SELECT` on the 9 curated system tables the Space queries (a subset of what the app already reads). All reads are read-only. The [Deployment guide](docs/CUSTOMER_DEPLOYMENT.md) lists the exact grants per deploy variant.
+The last three rows are **only** needed for the corresponding feature flag: DQM reads need the monitor metadata + the `DATA_QUALITY_MONITORING` billing line; Ask Genie needs the app SP to be able to **create / list Genie Spaces** (for auto-provision + title discovery) and `CAN RUN` on the Space, plus `SELECT` on the 9 curated system tables the Space queries (a subset of what the app already reads). All reads are read-only.
 
-**Grant statement (minimum):**
-
-```sql
-GRANT SELECT ON SCHEMA system.billing            TO `<app-service-principal>`;
-GRANT SELECT ON TABLE  system.query.history      TO `<app-service-principal>`;
-GRANT SELECT ON SCHEMA system.compute            TO `<app-service-principal>`;  -- Cluster Efficiency (clusters + node_timeline)
-GRANT SELECT ON TABLE  system.access.audit       TO `<app-service-principal>`;
-GRANT SELECT ON SCHEMA system.information_schema  TO `<app-service-principal>`;
-GRANT SELECT ON SCHEMA system.lakeflow           TO `<app-service-principal>`;
--- plus USE CATALOG / USE SCHEMA on any user catalog you want DESCRIBE DETAIL to reach.
-```
+**For the complete, ready-to-run grant statement → see [Step ④ — Grant system-table access](docs/CUSTOMER_DEPLOYMENT.md#step--grant-the-app-read-access-to-your-data) in the Deployment guide.** It lists every required table by schema and explains which tabs each one powers. If a tab shows *"needs read access"* after deployment, the guide also explains how to diagnose and fix it.
 
 Every API payload carries `demo` / `mode` metadata; the UI renders a **DEMO DATA** badge whenever `USE_LIVE=false`, so demo numbers are never mistaken for live ones.
 

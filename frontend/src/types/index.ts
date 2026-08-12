@@ -235,7 +235,8 @@ export interface TopUser extends SpendByEntity {
 }
 
 export interface TopJob extends SpendByEntity {
-  job: string;
+  job: string;       // human-readable job name (falls back to the id when unresolved)
+  job_id?: string;   // the raw system.billing usage_metadata.job_id
 }
 
 export interface TopWarehouse extends SpendByEntity {
@@ -301,6 +302,14 @@ export interface CostDrivers {
   mom: DriverMoM[];
 }
 
+export interface WorkspaceGenieSpend {
+  total_list_cost_usd: number;
+  paid_list_cost_usd: number;
+  total_dbus: number;
+  distinct_users: number;
+  num_surfaces: number;
+}
+
 export interface WorkspaceDetail extends Workspace {
   product_mix: ProductMixSlice[];
   monthly_trend: WorkspaceMonthPoint[];
@@ -308,6 +317,7 @@ export interface WorkspaceDetail extends Workspace {
   top_jobs: TopJob[];
   top_warehouses: TopWarehouse[];
   cost_drivers: CostDrivers | null;
+  genie?: WorkspaceGenieSpend | null;
 }
 
 export type QueryFlag =

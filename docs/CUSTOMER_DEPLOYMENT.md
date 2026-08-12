@@ -222,19 +222,86 @@ access** entitlement for it in workspace admin settings.
 the block below, replace `<app-sp>` with the service principal client ID, and click
 **Run**:
 
+### Grant system-table access to the app service principal
+
+**Why this matters:** Each tab in the app reads specific system tables. If a grant is missing,
+that tab displays *"needs read access"* with the exact `GRANT` statement to run — it never
+crashes or fabricates data. The Jobs tab is particularly common to miss: it needs
+`system.lakeflow.job_run_timeline`. The Data Quality tab needs tables under
+`system.data_quality_monitoring`. These grants are **required before the tabs show live data**.
+
+**Run this SQL block as an account/metastore admin** (the app's service principal is read-only
+and cannot grant itself access). Replace `<app-sp>` with the service principal client ID you
+copied above:
+
 ```sql
-GRANT USE CATALOG ON CATALOG system                          TO `<app-sp>`;  -- see the system catalog
-GRANT USE SCHEMA, SELECT ON SCHEMA system.billing            TO `<app-sp>`;  -- Overview, Genie $, AI $, Cost drivers
-GRANT USE SCHEMA, SELECT ON SCHEMA system.query              TO `<app-sp>`;  -- Query Advisor, Warehouse Monitor, idle %
-GRANT USE SCHEMA, SELECT ON SCHEMA system.compute            TO `<app-sp>`;  -- Cluster Efficiency (clusters + node_timeline)
-GRANT USE SCHEMA, SELECT ON SCHEMA system.access             TO `<app-sp>`;  -- Tables, Adoption
-GRANT USE SCHEMA, SELECT ON SCHEMA system.information_schema TO `<app-sp>`;  -- Access, Governance
-GRANT USE SCHEMA, SELECT ON SCHEMA system.lakeflow           TO `<app-sp>`;  -- Automated %, jobs
+-- ============================================================================
+-- Estate Command Center — Complete system-table grants
+-- ============================================================================
+-- Replace <app-sp> with the app's service principal (e.g. a1b2c3d4-…)
+-- Run this as account/metastore + workspace admin
+-- ============================================================================
+
+-- Catalog visibility
+GRANT USE CATALOG ON CATALOG system TO `<app-sp>`;
+
+-- Billing & cost (Overview, Workspaces, Genie $, AI $, Cost drivers)
+GRANT USE SCHEMA, SELECT ON SCHEMA system.billing TO `<app-sp>`;
+GRANT SELECT ON TABLE system.billing.usage TO `<app-sp>`;
+GRANT SELECT ON TABLE system.billing.list_prices TO `<app-sp>`;
+
+-- Query observability (Query Advisor, Warehouse Monitor, idle % detection)
+GRANT USE SCHEMA, SELECT ON SCHEMA system.query TO `<app-sp>`;
+GRANT SELECT ON TABLE system.query.history TO `<app-sp>`;
+
+-- Compute resources (Cluster Efficiency, cluster sizing & idle analysis)
+GRANT USE SCHEMA, SELECT ON SCHEMA system.compute TO `<app-sp>`;
+GRANT SELECT ON TABLE system.compute.clusters TO `<app-sp>`;
+GRANT SELECT ON TABLE system.compute.node_timeline TO `<app-sp>`;
+GRANT SELECT ON TABLE system.compute.warehouses TO `<app-sp>`;
+
+-- Access & lineage (Tables page, Adoption & Value, Access page)
+GRANT USE SCHEMA, SELECT ON SCHEMA system.access TO `<app-sp>`;
+GRANT SELECT ON TABLE system.access.audit TO `<app-sp>`;
+GRANT SELECT ON TABLE system.access.table_lineage TO `<app-sp>`;
+GRANT SELECT ON TABLE system.access.workspaces_latest TO `<app-sp>`;
+
+-- Information schema (Access page grants graph, Governance, Data Classification)
+GRANT USE SCHEMA, SELECT ON SCHEMA system.information_schema TO `<app-sp>`;
+GRANT SELECT ON TABLE system.information_schema.tables TO `<app-sp>`;
+GRANT SELECT ON TABLE system.information_schema.table_privileges TO `<app-sp>`;
+GRANT SELECT ON TABLE system.information_schema.schema_privileges TO `<app-sp>`;
+GRANT SELECT ON TABLE system.information_schema.catalog_privileges TO `<app-sp>`;
+GRANT SELECT ON TABLE system.information_schema.routine_privileges TO `<app-sp>`;
+GRANT SELECT ON TABLE system.information_schema.table_tags TO `<app-sp>`;
+GRANT SELECT ON TABLE system.information_schema.column_tags TO `<app-sp>`;
+
+-- Lakeflow (Jobs tab cost & reliability, automated % calculation)
+-- ⚠️ Jobs tab will fail with "needs read access" if this grant is missing
+GRANT USE SCHEMA, SELECT ON SCHEMA system.lakeflow TO `<app-sp>`;
+GRANT SELECT ON TABLE system.lakeflow.job_run_timeline TO `<app-sp>`;
+
 -- + USE CATALOG / USE SCHEMA on any user catalog you want the Tables page to inspect in detail.
 ```
+
+**What each system schema provides:**
+
+| Schema | Tables | Powers |
+|---|---|---|
+| `system.billing` | `usage`, `list_prices` | Overview KPIs, spend/DBU trends, cost drivers, per-SKU breakdown, Genie $ attribution, AI $ inventory |
+| `system.query` | `history` | Query Advisor, Warehouse Monitor, idle warehouse detection, top users/warehouses, query flags |
+| `system.compute` | `clusters`, `node_timeline`, `warehouses` | Cluster Efficiency (sizing/idle/CPU analysis), warehouse queue % & spill detection |
+| `system.access` | `audit`, `table_lineage`, `workspaces_latest` | Tables page (usage/freshness), Adoption & Value map, Access page last-accessed tracking |
+| `system.information_schema` | `tables`, `*_privileges`, `*_tags` | Access page grants graph (who-can-access-what), Governance (certification coverage, data classification), governed tags |
+| `system.lakeflow` | `job_run_timeline` | **Jobs tab** (cost/run, failure rate, runtime spikes, cost growth) — **fails with "needs read access" if missing** |
+
 > Reading a Unity Catalog table needs **both** `USE SCHEMA` **and** `SELECT` (plus
 > `USE CATALOG` on `system`) — `SELECT` alone gives `INSUFFICIENT_PERMISSIONS: … does
 > not have USE SCHEMA`. The combined grants above cover it.
+
+**If a tab still shows "needs read access" after running the SQL above:** the warehouse may be
+stopped, or a specific table grant is still missing. Check the exact error message in the tab
+— it names the missing object and the exact `GRANT` to run.
 
 <details>
 <summary><b>FYI — widen the Access page to your whole estate</b> (advanced, optional; the app works fine without it)</summary>
@@ -271,8 +338,11 @@ that don't apply to you**; most deployments need none of them.
 
 <br>
 
-- **Data Quality tab** (`FINOPS_FEATURE_DQM: "true"`) — also run
-  `GRANT USE SCHEMA, SELECT ON SCHEMA system.data_quality_monitoring TO \`<app-sp>\`;`.
+- **Data Quality tab** (`FINOPS_FEATURE_DQM: "true"`) — also run:
+  ```sql
+  GRANT USE SCHEMA, SELECT ON SCHEMA system.data_quality_monitoring TO `<app-sp>`;
+  GRANT SELECT ON TABLE system.data_quality_monitoring.table_results TO `<app-sp>`;
+  ```
   That schema **only exists once someone has enabled anomaly detection** on a schema; if you
   don't use Data Quality Monitoring the grant errors with `SCHEMA_DOES_NOT_EXIST` — in that
   case just leave the tab off (`FINOPS_FEATURE_DQM: "false"` in Step ②) and skip this.
