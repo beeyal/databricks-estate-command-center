@@ -155,11 +155,17 @@ env:
   # ── Environment tiers from workspace names ──────────────────────────────────
   # Ordered "Tier:token|token" rules, ";"-separated. Names are split into tokens on
   # any non-letter/digit (DATA-EDP-TST → data, edp, tst); first matching tier wins.
-  # BLANK ⇒ built-in tiers: Dev (dev, develop), Test (tst, test, qa, uat, sit),
-  # Pre-prod (ppd, preprod, stg, staging), Sandbox (sbx, sandbox, poc), Non-prod
+  # BLANK ⇒ built-in tiers: Dev (dev, develop), Test (tst, test, qa, uat, sit, fat,
+  # sat), Pre-prod (ppd, preprod, stg, staging, prf), Sandbox (sbx, sandbox, poc), Non-prod
   # (nonprod, npd), Prod (prd, prod, production). Dev/Test/Pre-prod/Sandbox/Non-prod
   # count as Non-production.
   - name: FINOPS_ENV_TIERS
+    value: ""
+
+  # Filler words dropped from the automatic platform name (technology / region
+  # suffixes every workspace shares). BLANK ⇒ adb,dbw,databricks,aue,ase,aueast.
+  # Set to "-" to keep every word.
+  - name: FINOPS_PLATFORM_STRIP_WORDS
     value: ""
 
   # ── Extra Non-production rule ───────────────────────────────────────────────

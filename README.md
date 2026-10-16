@@ -306,15 +306,21 @@ The name is split into words on any separator (`-`, `_`, `.`, space, brackets), 
 Built-in environment words (override with `FINOPS_ENV_TIERS`, e.g. `"Dev:dev;Test:tst|uat;Pre-prod:ppd;Prod:prd"`):
 
 - **Dev:** dev, develop, development, dv
-- **Test:** tst, test, testing, qa, uat, sit
-- **Pre-prod:** ppd, preprod (also `pre-prod`), stg, stage, staging, perf
+- **Test:** tst, test, testing, qa, uat, sit, fat, sat
+- **Pre-prod:** ppd, preprod (also `pre-prod`), stg, stage, staging, perf, prf
 - **Sandbox:** sbx, sandbox, lab, poc, playground
 - **Non-prod:** nonprod (also `non-prod`, `non_prod`), nonprd, npd
 - **Prod:** prd, prod, production, live
 
 Dev, Test, Pre-prod, Sandbox and Non-prod count as **Non-production**. A name with no environment word is **Unclassified** and treated as Production (the conservative default — nothing is called non-prod by guesswork).
 
-**What it deliberately doesn't do:** match an environment word inside a longer word (`product` isn't prod, `device` isn't dev), or split an all-capitals word with no separator (`NETPROD`). A number next to the environment word is treated as an instance number and dropped from the platform (`dev01-net` → net), which also means `edp-01-prd` and `edp-02-prd` share the platform `edp` — use the mapping table if they're different systems.
+**What it deliberately doesn't do:** match an environment word inside a longer word (`product` isn't prod, `device` isn't dev), or split an all-capitals word with no separator (`NETPROD`). A number glued to the environment word, or one that comes after it at the end of the name, is treated as an instance number and dropped from the platform (`dev01-net` → net, `forecasting_DEV_01` → forecasting). A number before the environment word is part of the platform (`MDM-01-DEV` and `MDM-01-PRD` are platform `MDM-01`).
+
+**Numbered and acceptance environments.** Two-letter-plus-digit codes are read as a numbered copy of an environment — `DE2` is a second Dev, `TS2` a second Test, `UA2` a second UAT, `PO2` a second POC — and `FAT` / `SAT` (factory / site acceptance testing) count as Test, `PRF` as Pre-prod. Older glued names work too when the code is one of the three-letter abbreviations and at least four letters remain (`coreedpprd` → Prod, platform `coreedp`).
+
+**Filler words.** Technology and region suffixes that every workspace shares — `adb`, `dbw`, `databricks`, `aue`, `ase`, `aueast` — are dropped from the automatic platform name, so `CORE-PAY-ENG-TST-ADB-AUE` is platform `CORE-PAY-ENG`. Change the list with `FINOPS_PLATFORM_STRIP_WORDS` (comma-separated; `-` to keep everything).
+
+**Tested against a real estate.** The rules were checked against the full workspace list of a large production account (over 200 workspaces using a `DOMAIN-SYSTEM-TYPE-ENV-ADB-REGION` convention, with environments DEV, DE2, TST, TS2, SIT, UAT, FAT, STG, PPD, PRD and POC): every workspace with an environment code was classified, and each system's Dev/Test/Pre-prod/Prod workspaces landed on one platform row.
 
 ### Platform rules vs automatic
 

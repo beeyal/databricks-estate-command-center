@@ -44,8 +44,8 @@ from functools import lru_cache
 _DEMO_GROUPS = "DATA-EDP-:EDP Core;DATA-ANA-:EDP Edge;FORE-:Forecasting"
 _DEFAULT_TIERS = (
     "Dev:dev|develop|development|dv;"
-    "Test:tst|test|testing|qa|uat|sit;"
-    "Pre-prod:ppd|preprod|stg|stage|staging|perf;"
+    "Test:tst|test|testing|qa|uat|sit|fat|sat;"
+    "Pre-prod:ppd|preprod|stg|stage|staging|perf|prf;"
     "Sandbox:sbx|sandbox|lab|poc|playground;"
     "Non-prod:nonprod|nonprd|npd;"
     "Prod:prd|prod|production|live"
@@ -111,6 +111,16 @@ def _nonprod_re() -> re.Pattern[str] | None:
 
 
 _TOKEN_SPLIT = re.compile(r"[^A-Za-z0-9]+")
+_DEFAULT_NOISE = "adb,dbw,databricks,aue,ase,aueast,ausoutheast,ause"
+
+
+@lru_cache(maxsize=1)
+def _noise_words() -> frozenset[str]:
+    """Filler words dropped from an automatic platform name (technology / region
+    suffixes that every workspace shares). FINOPS_PLATFORM_STRIP_WORDS overrides
+    (comma-separated; set it to "-" to strip nothing)."""
+    raw = os.environ.get("FINOPS_PLATFORM_STRIP_WORDS") or _DEFAULT_NOISE
+    return frozenset(w.strip().lower() for w in raw.split(",") if w.strip() and w.strip() != "-")
 # Inside each separator-delimited piece, also split on case changes and digit
 # boundaries, so "ForecastingDev", "devForecasting", "DEV01" and "prod2" yield
 # their environment word. Environment words are NOT matched as substrings of a
@@ -142,8 +152,32 @@ def _token_spans(name: str) -> list[tuple[str, int, int]]:
         if not subs:
             out.append((piece, base, base + len(piece)))
         for sm in subs:
-            out.append((sm.group(0), base + sm.start(), base + sm.end()))
+            out.extend(_split_glued(sm.group(0), base + sm.start()))
     return out
+
+
+# Three-letter environment abbreviations that are also recognised when glued to
+# a longer single-case word ("dataedpprd", "mrktderrtst", "devforecasting"),
+# as long as at least four letters remain. Only the short codes — the full
+# words ("test", "prod") glued to others ("latest", "products") are far more
+# likely to be ordinary English.
+_GLUE_ABBR = ("dev", "tst", "prd", "ppd", "stg", "uat", "sit", "sbx", "npd", "poc")
+_GLUE_MIN_REST = 4
+
+
+def _split_glued(tok: str, start: int) -> list[tuple[str, int, int]]:
+    low = tok.lower()
+    if (len(tok) >= 3 + _GLUE_MIN_REST and tok.isalpha() and (tok.islower() or tok.isupper())
+            and low not in _all_env_tokens()):
+        for ab in _GLUE_ABBR:
+            if ab not in _all_env_tokens():
+                continue
+            if low.endswith(ab):
+                k = len(tok) - 3
+                return [(tok[:k], start, start + k), (tok[k:], start + k, start + len(tok))]
+            if low.startswith(ab):
+                return [(tok[:3], start, start + 3), (tok[3:], start + 3, start + len(tok))]
+    return [(tok, start, start + len(tok))]
 
 
 def _tokens(name: str) -> list[str]:
@@ -169,21 +203,78 @@ def workspace_group(name: str) -> str:
     return OTHER_GROUP
 
 
+@lru_cache(maxsize=1)
+def _tok2tier() -> tuple[dict[str, str], dict[str, int], dict[str, str]]:
+    """token → tier (first rule wins), tier → rule order, and the two-letter
+    stem of each three-letter token for numbered variants (DE2, TS2, UA2, PO2 =
+    a second Dev / Test / UAT / POC environment) when that stem is unambiguous."""
+    tok: dict[str, str] = {}
+    order: dict[str, int] = {}
+    stems: dict[str, set[str]] = {}
+    for i, (tier, toks) in enumerate(_tier_rules()):
+        order.setdefault(tier, i)
+        for t in toks:
+            tok.setdefault(t, tier)
+            if len(t) == 3 and t.isalpha():
+                stems.setdefault(t[:2], set()).add(tok[t])
+    stem = {k: next(iter(v)) for k, v in stems.items() if len(v) == 1}
+    return tok, order, stem
+
+
 @lru_cache(maxsize=4096)
+def _env_scan(name: str) -> tuple[str, tuple[bool, ...]]:
+    """(tier, env_mask) for a workspace name. env_mask marks the tokens that
+    are the environment word (plus a number glued to it), for platform rebuild.
+    Precedence: joined pairs ("PRE-PROD", "NON_PROD") → single words → numbered
+    variants ("DE2"); within each, the earliest tier rule wins."""
+    spans = _token_spans(name)
+    low = [t.lower() for t, _a, _b in spans]
+    tok, order, stem = _tok2tier()
+    mask = [False] * len(low)
+    found: list[tuple[int, int, str]] = []   # (stage, rule order, tier)
+    for i in range(len(low) - 1):
+        t = tok.get(low[i] + low[i + 1])
+        if t:
+            mask[i] = mask[i + 1] = True
+            found.append((0, order[t], t))
+    for i, w in enumerate(low):
+        t = tok.get(w)
+        if t and not mask[i]:
+            mask[i] = True
+            found.append((1, order[t], t))
+    for i in range(len(low) - 1):
+        a, b = spans[i], spans[i + 1]
+        if (not mask[i] and low[i].isalpha() and len(low[i]) == 2 and low[i + 1].isdigit()
+                and a[2] == b[1] and low[i] in stem):
+            t = stem[low[i]]
+            mask[i] = mask[i + 1] = True
+            found.append((2, order[t], t))
+    # A number GLUED to the environment word is an instance number ("dev01",
+    # "DEV2", "prod2"); a number separated from it ("MDM-01-DEV") belongs to the
+    # platform name and is kept.
+    for i, w in enumerate(low):
+        if w.isdigit() and not mask[i]:
+            if (i > 0 and mask[i - 1] and spans[i - 1][2] == spans[i][1]) or \
+               (i + 1 < len(low) and mask[i + 1] and spans[i][2] == spans[i + 1][1]):
+                mask[i] = True
+    # A number that comes AFTER the environment word and ends the name (ignoring
+    # filler like ADB/AUE) is also an instance number ("forecasting_DEV_01",
+    # "dbw-ap1-prd-aueast-01"). A number BEFORE it stays ("OPS-CRM-01-DEV").
+    if found:
+        noise = _noise_words()
+        tail = [i for i, w in enumerate(low) if not mask[i] and w not in noise]
+        if tail and low[tail[-1]].isdigit():
+            j = tail[-1]
+            prev = [i for i in range(j) if low[i] not in noise]
+            if prev and mask[prev[-1]]:
+                mask[j] = True
+    tier = min(found)[2] if found else UNCLASSIFIED
+    return tier, tuple(mask)
+
+
 def workspace_tier(name: str) -> str:
-    """DEV / TEST / PRE-PROD / … tier from the name's tokens (first rule wins)."""
-    tokens = [t.lower() for t in _tokens(name)]
-    # Also try adjacent pairs joined, so "PRE-PROD" / "NON_PROD" read as
-    # "preprod" / "nonprod" — and are checked BEFORE the single tokens, so the
-    # "prod" half of "PRE-PROD" can't classify it as Prod.
-    pairs = [a + b for a, b in zip(tokens, tokens[1:])]
-    for tier, toks in _tier_rules():
-        if any(p in toks for p in pairs):
-            return tier
-    for tier, toks in _tier_rules():
-        if any(t in toks for t in tokens):
-            return tier
-    return UNCLASSIFIED
+    """DEV / TEST / PRE-PROD / … tier from the name's words."""
+    return _env_scan(name or "")[0]
 
 
 def workspace_environment(name: str) -> str:
@@ -230,26 +321,19 @@ def workspace_platform(name: str) -> str:
         if m and m.group("platform"):
             return m.group("platform")
     spans = _token_spans(raw)
-    tokens = [t for t, _a, _b in spans]
-    if not tokens:
+    if not spans:
         return raw
-    env_tokens = _all_env_tokens()
-    keep = [True] * len(tokens)
-    low = [t.lower() for t in tokens]
-    for i in range(len(tokens) - 1):           # "PRE-PROD", "NON_PROD" pairs
-        if low[i] + low[i + 1] in env_tokens:
-            keep[i] = keep[i + 1] = False
-    for i, t in enumerate(low):
-        if t in env_tokens:
-            keep[i] = False
-    # A number right next to the environment word is an instance number
-    # ("dev01", "DEV_01", "prod2"), not part of the platform name.
-    for i, t in enumerate(low):
-        if t.isdigit() and ((i > 0 and not keep[i - 1] and low[i - 1] in env_tokens)
-                            or (i + 1 < len(low) and not keep[i + 1] and low[i + 1] in env_tokens)):
-            keep[i] = False
+    _tier, mask = _env_scan(raw)
+    keep = [not m for m in mask]
     if all(keep) or not any(keep):
         return raw                              # nothing (or only an env word) to strip
+    # Also drop technology / region filler words (ADB, DBW, AUE…) so
+    # "CORE-PAY-ENG-TST-ADB-AUE" is platform "CORE-PAY-ENG" — but only while
+    # something meaningful remains.
+    noise = _noise_words()
+    trial = [k and spans[i][0].lower() not in noise for i, k in enumerate(keep)]
+    if any(trial):
+        keep = trial
     # Cut the dropped spans out of the ORIGINAL string, then tidy the separators
     # left behind, so "PDFReader-prod" → "PDFReader" and "net_prod_v2" → "net_v2".
     out, pos = [], 0
@@ -260,6 +344,10 @@ def workspace_platform(name: str) -> str:
             pos = b
     out.append(raw[pos:])
     txt = "".join(out)
+    # Merge runs of removed spans first ("ap1-<prd>-<aueast>-01"), so the
+    # separators between them collapse to one.
+    while re.search(r"\0[\s_.\-]*\0", txt):
+        txt = re.sub(r"\0([\s_.\-]*)\0", lambda m: "\0" if not m.group(1) else m.group(1)[0] + "\0", txt)
     txt = re.sub(r"[\s_.\-]*\0[\s_.\-]*", lambda m: _join_sep(m.group(0)), txt)
     txt = re.sub(r"\(\s*\)", "", txt)            # "Net (Prod)" → "Net"
     return txt.strip(" -_.") or raw
@@ -316,7 +404,9 @@ def reset_cache() -> None:
     _tier_rules.cache_clear()
     _nonprod_re.cache_clear()
     _platform_re.cache_clear()
-    workspace_tier.cache_clear()
+    _tok2tier.cache_clear()
+    _noise_words.cache_clear()
+    _env_scan.cache_clear()
     workspace_platform.cache_clear()
 
 
@@ -337,6 +427,15 @@ if __name__ == "__main__":
         ("product-analytics", UNCLASSIFIED, "product-analytics"),
         ("device-telemetry", UNCLASSIFIED, "device-telemetry"), ("contest-app", UNCLASSIFIED, "contest-app"),
         ("prod", "Prod", "prod"),
+        # domain-system-type-env-tech-region conventions, numbered environments,
+        # acceptance-test codes, filler suffixes, numbers inside the platform name
+        ("CORE-PAY-ENG-DE2-ADB-AUE", "Dev", "CORE-PAY-ENG"), ("CORE-PAY-ENG-TS2-ADB-AUE", "Test", "CORE-PAY-ENG"),
+        ("CORE-PAY-ENG-PPD-ADB-AUE", "Pre-prod", "CORE-PAY-ENG"), ("CORE-PAY-ENG-PRD-ADB-AUE", "Prod", "CORE-PAY-ENG"),
+        ("OPS-CRM-01-FAT-ADB-AUE", "Test", "OPS-CRM-01"), ("OPS-CRM-01-SAT-ADB-AUE", "Test", "OPS-CRM-01"),
+        ("OPS-CRM-01-UA2-ADB-AUE", "Test", "OPS-CRM-01"), ("OPS-CRM-01-PRF-ADB-AUE", "Pre-prod", "OPS-CRM-01"),
+        ("XYZ-GEN-APP-PO2-ADB-AUE", "Sandbox", "XYZ-GEN-APP"), ("dbw-ap1-prd-aueast-01", "Prod", "ap1"),
+        ("coreedpprd-adb-aue", "Prod", "coreedp"), ("opscrmtst-adb-aue", "Test", "opscrm"),
+        ("edp-01-prd", "Prod", "edp-01"), ("OPS-CRM-01-MIG-ADB-AUE", UNCLASSIFIED, "OPS-CRM-01-MIG-ADB-AUE"),
     ]
     bad = 0
     for name, tier, plat in cases:
