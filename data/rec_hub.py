@@ -1121,15 +1121,42 @@ def build_hub(
     Returns the rec list + KPI summary + category/priority counts + the
     cost-attribution rollup. Filters are applied to the rec list; the summary
     reflects the filtered list so the KPIs reconcile to what is on screen.
+    The unfiltered result also carries ``bu_of_ws`` so a cached/gold snapshot
+    can be re-filtered later with filter_hub() without rebuilding the estate.
     """
     _refresh_live_if_stale()   # TTL: don't serve process-lifetime-frozen live data
-    recs = [dict(r) for r in _all_recs()]
+    base = {
+        "recommendations": _all_recs(),
+        "attribution": cost_attribution(),
+        "cached_at": live_cached_at(),
+        "bu_of_ws": dict(estate_metrics().get("bu_of_ws") or {}),
+    }
+    return filter_hub(base, workspace=workspace, priority=priority, category=category, scope=scope)
+
+
+def filter_hub(
+    base: dict[str, Any],
+    *,
+    workspace: str = "all",
+    priority: str = "all",
+    category: str = "all",
+    scope: str = "all",
+) -> dict[str, Any]:
+    """Apply the hub filters to an already-built (unfiltered) hub payload and
+    recompute the summary over what's left. Pure + cheap, so a filtered view of
+    a cached or gold snapshot no longer re-runs the whole estate build (which
+    was ~2-3 min cold on a large estate, on every filter click after a restart).
+    Snapshots written before ``bu_of_ws`` was stored fall back to
+    estate_metrics() for the workspace→BU lookup."""
+    recs = [dict(r) for r in (base.get("recommendations") or [])]
+    bu_of_ws = base.get("bu_of_ws")
 
     # workspace filter — match on the scope_label (BU/workspace/table) or by the
     # BU that a workspace belongs to.
     if workspace and workspace != "all":
-        m = estate_metrics()
-        bu = m["bu_of_ws"].get(workspace)
+        if bu_of_ws is None:
+            bu_of_ws = estate_metrics().get("bu_of_ws") or {}
+        bu = bu_of_ws.get(workspace)
         recs = [
             r for r in recs
             if r["scope_label"] == workspace
@@ -1155,7 +1182,7 @@ def build_hub(
         cat_savings[r["category"]] = cat_savings.get(r["category"], 0.0) + r["est_savings_usd_month"]
     top_category = max(cat_savings.items(), key=lambda kv: kv[1])[0] if cat_savings else None
 
-    attribution = cost_attribution()
+    attribution = base.get("attribution") or {}
 
     return {
         "recommendations": recs,
@@ -1169,13 +1196,14 @@ def build_hub(
             "savings_is_upper_bound": True,
             "num_p1": num_p1,
             "num_recs": len(recs),
-            "untagged_spend_usd_month": attribution["total_untagged_usd_month"],
-            "untagged_pct": attribution["untagged_pct"],
+            "untagged_spend_usd_month": attribution.get("total_untagged_usd_month", 0),
+            "untagged_pct": attribution.get("untagged_pct", 0),
             "top_category": top_category,
             "category_counts": cat_counts,
             "priority_counts": prio_counts,
             "category_savings": {k: round(v) for k, v in cat_savings.items()},
         },
         "attribution": attribution,
-        "cached_at": live_cached_at(),
+        "cached_at": base.get("cached_at"),
+        "bu_of_ws": bu_of_ws if bu_of_ws is not None else base.get("bu_of_ws"),
     }

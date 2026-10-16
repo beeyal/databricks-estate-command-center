@@ -89,7 +89,7 @@ if USE_LIVE and WAREHOUSE_ID:
     from data import rec_hub
     from data.rec_hub_live import LiveProvider
 
-    rec_hub.set_provider(LiveProvider(WAREHOUSE_ID))
+    rec_hub.set_provider(LiveProvider(WAREHOUSE_ID, GOLD_SCHEMA))
 
 
 # ---------------------------------------------------------------------------
@@ -132,21 +132,48 @@ def _persist_key(key: str) -> str:
     return f"payload:v{_CACHE_VERSION}:{key}"
 
 
+# A fail-soft builder (jobs / warehouses / clusters) returns an EMPTY payload
+# carrying a ``message`` when its required read failed (missing grant, timeout).
+# Caching that for the full hour — and persisting it — meant the tab kept showing
+# the error for up to an hour after the admin fixed the grant. Degraded payloads
+# are held only briefly (so a burst of page loads doesn't re-run a failing scan)
+# and never persisted.
+_DEGRADED_TTL_S = 60.0
+
+
+def _is_degraded(payload: Any) -> bool:
+    from data.gold import is_degraded_payload
+    return is_degraded_payload(payload)
+
+
+def _store_payload(key: str, payload: Any) -> None:
+    """Put a freshly built payload into tier 1 (+ persist unless degraded)."""
+    import time
+    if _is_degraded(payload):
+        # Back-date the timestamp so it expires _DEGRADED_TTL_S from now.
+        _live_payload_cache[key] = (time.monotonic() - _LIVE_PAYLOAD_TTL_SECONDS + _DEGRADED_TTL_S, payload)
+        return
+    _live_payload_cache[key] = (time.monotonic(), payload)
+
+    # Persist in the background — the write (a Lakebase upsert or a Delta MERGE)
+    # must never add latency to the response that triggered the build.
+    def _persist() -> None:
+        try:
+            from data import store
+            store.cache_put(_persist_key(key), payload)
+        except Exception:  # noqa: BLE001
+            pass
+    __import__("threading").Thread(target=_persist, daemon=True).start()
+
+
 def _live_payload_refresh(key: str, build) -> Any:
     """Run build(), store the result in BOTH tiers, clear the single-flight flag.
     Returns the built payload (or None if the build yields None / raises)."""
-    import time
     payload = None
     try:
         payload = build()
         if payload is not None:
-            _live_payload_cache[key] = (time.monotonic(), payload)
-            # Persist to Lakebase (best-effort; no-op unless that backend is on).
-            try:
-                from data import store
-                store.cache_put(_persist_key(key), payload)
-            except Exception:  # noqa: BLE001
-                pass
+            _store_payload(key, payload)
     finally:
         with _live_payload_lock:
             _live_payload_refreshing.discard(key)
@@ -191,6 +218,8 @@ def _live_payload_cached(key: str, build):
         persisted = store.cache_get(_persist_key(key))
     except Exception:  # noqa: BLE001
         persisted = None
+    if persisted is not None and _is_degraded(persisted[0]):
+        persisted = None                           # never resurrect a persisted error state
     if persisted is not None:
         payload, age = persisted
         _live_payload_cache[key] = (now, payload)  # seed tier 1
@@ -213,12 +242,7 @@ def _live_payload_cached(key: str, build):
             return hit[1]                          # another thread built it while we waited
         payload = build()
         if payload is not None:
-            _live_payload_cache[key] = (time.monotonic(), payload)
-            try:
-                from data import store
-                store.cache_put(_persist_key(key), payload)
-            except Exception:  # noqa: BLE001
-                pass
+            _store_payload(key, payload)
         return payload
 
 
@@ -280,6 +304,7 @@ def _self_provision() -> None:
                 build()
             except Exception:  # noqa: BLE001 - warming is best-effort
                 pass
+        _live.warm_auth()  # resolve credentials once before the concurrent warm-up
         for _label, _build in builds:
             threading.Thread(target=_warm_one, args=(_build,), daemon=True).start()
 
@@ -287,6 +312,27 @@ def _self_provision() -> None:
     threading.Thread(target=_warm_live_caches, daemon=True).start()
 
 app = FastAPI(title="Estate Command Center", version="1.0.0")
+
+
+class _GzipExceptStreams:
+    """gzip JSON + static responses (the Jobs / Recommendations / Access payloads
+    run to several MB of very compressible JSON), but pass the Ask Genie SSE
+    stream through untouched — older Starlette GZipMiddleware buffers small SSE
+    chunks, which would stall the token-by-token answer."""
+
+    def __init__(self, app_):
+        from starlette.middleware.gzip import GZipMiddleware
+        self._plain = app_
+        self._gz = GZipMiddleware(app_, minimum_size=1024)
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and not str(scope.get("path", "")).startswith("/api/genie/ask"):
+            await self._gz(scope, receive, send)
+        else:
+            await self._plain(scope, receive, send)
+
+
+app.add_middleware(_GzipExceptStreams)
 
 
 @app.on_event("startup")
@@ -457,6 +503,68 @@ def _table_health(t: dict[str, Any]) -> tuple[str, str]:
     return "Good", "fresh, well-compacted, actively maintained"
 
 
+# Short in-process cache for the per-item live drill-downs and workspace-scoped
+# views (workspace detail, principal / securable access, table detail, the
+# access tree, and the cost-drivers / Genie $ / AI $ views for ONE workspace).
+# These ran a fresh system-table read on EVERY open — re-opening the same drawer
+# or flicking back to a workspace re-paid 5-20s each time. 10 min keeps them
+# fresh enough for cost/grant data; single-flighted per key; errors aren't cached.
+_SHORT_TTL_S = 600.0
+_short_cache_store: dict[str, tuple[float, Any]] = {}
+_short_cache_locks: dict[str, Any] = {}
+
+
+def _short_cache(key: str, build):
+    import threading
+    import time
+    hit = _short_cache_store.get(key)
+    if hit is not None and time.monotonic() - hit[0] < _SHORT_TTL_S:
+        return hit[1]
+    with _live_payload_lock:
+        lk = _short_cache_locks.setdefault(key, threading.Lock())
+    with lk:
+        hit = _short_cache_store.get(key)
+        if hit is not None and time.monotonic() - hit[0] < _SHORT_TTL_S:
+            return hit[1]
+        val = build()
+        if val is not None:
+            if len(_short_cache_store) > 2000:   # bound memory on a huge estate
+                _short_cache_store.clear()
+            _short_cache_store[key] = (time.monotonic(), val)
+        return val
+
+
+# In-process memo over the nightly gold reads. Every gold-backed request used to
+# run a SQL read of <gold>.finops_gold AND decode (gunzip + JSON-parse) the whole
+# payload — on EVERY page load and every filter click (filters are applied in
+# Python after the read). Gold only changes when the nightly job runs, so holding
+# the decoded payload for 10 min removes a warehouse round-trip + multi-MB decode
+# from almost every request. A gold miss is held for 60s (then re-checked) so a
+# first gold run shows up quickly.
+_GOLD_MEMO_TTL_S = 600.0
+_GOLD_MISS_TTL_S = 60.0
+_gold_memo: dict[str, tuple[float, Any]] = {}
+
+
+def _read_gold_memo(key: str):
+    import time
+    from data import live
+
+    now = time.monotonic()
+    hit = _gold_memo.get(key)
+    if hit is not None:
+        ttl = _GOLD_MEMO_TTL_S if hit[1] is not None else _GOLD_MISS_TTL_S
+        if now - hit[0] < ttl:
+            return hit[1]
+    val = live.read_gold(WAREHOUSE_ID, GOLD_SCHEMA, key)
+    # A degraded snapshot (written by an older gold job) is treated as a miss so
+    # the request computes fresh instead of serving yesterday's error all day.
+    if val is not None and _is_degraded(val[0]):
+        val = None
+    _gold_memo[key] = (time.monotonic(), val)
+    return val
+
+
 def _gold_or_compute(key: str, compute):
     """GOLD-first serve: return the nightly-precomputed payload from
     <GOLD_SCHEMA>.finops_gold when present, else the persistent/in-memory cache,
@@ -466,10 +574,8 @@ def _gold_or_compute(key: str, compute):
     (_live_payload_cached) still keeps repeat + post-restart loads fast instead
     of recomputing the live scan every request. Raises live.LiveError (→ 503)
     only if the live compute itself fails. Returns (payload, snapshot_at_iso|"")."""
-    from data import live
-
     if GOLD_SCHEMA:
-        hit = live.read_gold(WAREHOUSE_ID, GOLD_SCHEMA, key)
+        hit = _read_gold_memo(key)
         if hit is not None:
             return hit  # (payload, snapshot_at)
     # No gold snapshot — in live mode route the live compute through the
@@ -749,7 +855,7 @@ def get_cost_drivers(workspace: str = Query("all")) -> dict[str, Any]:
         if workspace in ("all", ""):
             return _cached_or_live("cost-drivers", lambda: live.cost_drivers_live(WAREHOUSE_ID, None))
         try:
-            return _wrap(live.cost_drivers_live(WAREHOUSE_ID, workspace), live_source=True)
+            return _wrap(_short_cache(f"cost-drivers:{workspace}", lambda: live.cost_drivers_live(WAREHOUSE_ID, workspace)), live_source=True)
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
     return _wrap(demo.get_cost_drivers(workspace))
@@ -851,7 +957,7 @@ def get_access_tree() -> dict[str, Any]:
         from data import live
 
         try:
-            return _wrap(live.access_tree_live(WAREHOUSE_ID), live_source=True)
+            return _wrap(_short_cache("access-tree", lambda: live.access_tree_live(WAREHOUSE_ID)), live_source=True)
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
     return _wrap(demo.get_access_tree())
@@ -920,7 +1026,7 @@ def get_principal_access(principal: str) -> dict[str, Any]:
         from data import live
 
         try:
-            detail = live.principal_access_live(WAREHOUSE_ID, principal, INGEST_SCHEMA)
+            detail = _short_cache(f"principal:{principal}", lambda: live.principal_access_live(WAREHOUSE_ID, principal, INGEST_SCHEMA))
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
         if detail is None:
@@ -942,7 +1048,7 @@ def get_securable_access(fqn: str = Query(...)) -> dict[str, Any]:
         from data import live
 
         try:
-            return _wrap(live.securable_access_live(WAREHOUSE_ID, fqn), live_source=True)
+            return _wrap(_short_cache(f"securable:{fqn}", lambda: live.securable_access_live(WAREHOUSE_ID, fqn)), live_source=True)
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
     detail = demo.get_securable_access(fqn)
@@ -1019,7 +1125,7 @@ def get_workspace_detail(workspace_id: str) -> dict[str, Any]:
         # 503 with the addressable grant — NOT a 404, which would falsely imply
         # the workspace doesn't exist.
         try:
-            detail = live.workspace_detail_live(WAREHOUSE_ID, workspace_id)
+            detail = _short_cache(f"ws-detail:{workspace_id}", lambda: live.workspace_detail_live(WAREHOUSE_ID, workspace_id))
             live_source = True
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
@@ -1187,8 +1293,13 @@ def get_queries(
         # key, so 24h/7d/30d actually re-scope the query.history read in live (was
         # a fixed 7d ignoring the chip). Unknown values fall back to 7d.
         _days = {"24h": 1, "7d": 7, "30d": 30}.get(time_range, 7)
+        # Gold holds the 7-day window under "queries" (the hub reads that key too)
+        # and the 24h / 30d windows under "queries:1d" / "queries:30d". The old
+        # "queries:{n}d" key never matched gold, so Query Advisor always ran a
+        # full live query.history scan (~20s+) on a cold process.
+        _qkey = "queries" if _days == 7 else f"queries:{_days}d"
         rows, live_source, _c = _cached_rows_or_live(
-            f"queries:{_days}d", lambda: live.queries_live(WAREHOUSE_ID, _days))
+            _qkey, lambda: live.queries_live(WAREHOUSE_ID, _days))
     else:
         rows = [dict(r) for r in demo.get_queries()]
         rows = _scale_runs_for_range(rows, time_range)
@@ -1639,14 +1750,14 @@ def get_recommendations_hub(
                 detail="live read failed — recommendations: no live provider "
                        "(set DATABRICKS_WAREHOUSE_ID for USE_LIVE=true)")
         try:
-            # Unfiltered = the default page load + startup warmer: GOLD-first (the
-            # nightly job precomputes it), then the persistent two-tier cache, then
-            # a live build. Filtered requests build directly over rec_hub's own
-            # (now-primed) lru_caches.
-            if unfiltered:
-                payload, hub_cached_at = _gold_or_compute("hub", _build_hub)
-            else:
-                payload, hub_cached_at = _build_hub(), ""
+            # Always serve the UNFILTERED hub GOLD-first (nightly precompute), then
+            # the persistent two-tier cache, then a live build — and apply any
+            # filters to that snapshot in-process. Filtered requests used to call
+            # build_hub() directly, which on a cold process re-ran the whole
+            # ~2-3 min estate build on every filter click.
+            base, hub_cached_at = _gold_or_compute("hub", lambda: rec_hub.build_hub())
+            payload = base if unfiltered else rec_hub.filter_hub(
+                base, workspace=workspace, priority=priority, category=category, scope=scope)
             live_source = True
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
@@ -1708,7 +1819,7 @@ def get_genie_cost(workspace: str = Query("all")) -> dict[str, Any]:
             env = _cached_or_live("genie-cost", lambda: live.genie_cost_live(WAREHOUSE_ID, None))
             return _attach_platform_total_env(env)
         try:
-            payload = live.genie_cost_live(WAREHOUSE_ID, workspace)
+            payload = dict(_short_cache(f"genie-cost:{workspace}", lambda: live.genie_cost_live(WAREHOUSE_ID, workspace)))
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
         return _wrap(_attach_platform_total_payload(payload), live_source=True)
@@ -1737,7 +1848,7 @@ def get_ai_cost(workspace: str = Query("all")) -> dict[str, Any]:
             env = _cached_or_live("ai-cost", lambda: live.ai_cost_live(WAREHOUSE_ID, None))
             return _attach_platform_total_env(env)
         try:
-            payload = live.ai_cost_live(WAREHOUSE_ID, workspace)
+            payload = dict(_short_cache(f"ai-cost:{workspace}", lambda: live.ai_cost_live(WAREHOUSE_ID, workspace)))
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
         return _wrap(_attach_platform_total_payload(payload), live_source=True)
@@ -1987,11 +2098,13 @@ def get_dqm(
                 raise HTTPException(
                     status_code=503,
                     detail=(
-                        "Data Quality tab needs read access to the DQM system schema. "
-                        "Ask an account admin to enable it and grant the app: "
-                        "GRANT USE SCHEMA, SELECT ON SCHEMA system.data_quality_monitoring "
-                        "TO `<app-service-principal>`. Until then this tab is unavailable "
-                        "(the app fails closed rather than showing sample data)."
+                        "Data Quality tab needs read access to the Data Quality Monitoring results table. "
+                        "Ask an account admin to grant the app SELECT on the TABLE (not the schema): "
+                        "GRANT SELECT ON TABLE system.data_quality_monitoring.table_results "
+                        "TO `<app-service-principal>`. A schema-level grant fails with "
+                        "\"User does not have MANAGE on Schema\" even for metastore admins — "
+                        "Databricks owns that schema and only delegates MANAGE on the table. "
+                        "Until then this tab is unavailable (the app fails closed rather than showing sample data)."
                     ),
                 )
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
@@ -2089,7 +2202,7 @@ def get_table_detail(fqn: str) -> dict[str, Any]:
         from data import live
 
         try:
-            detail = live.table_detail_live(WAREHOUSE_ID, fqn)
+            detail = _short_cache(f"table:{fqn}", lambda: live.table_detail_live(WAREHOUSE_ID, fqn))
             live_source = True
         except live.LiveError as e:
             # A live read FAILURE (e.g. ungranted DESCRIBE) is not "table doesn't

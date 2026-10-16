@@ -72,7 +72,8 @@ env:
   # just no LLM phrasing. No model is ever called when off.
   - name: FINOPS_FEATURE_AI_NARRATION
     value: "true"
-  # Data Quality tab (reads system.data_quality_monitoring — needs that grant).
+  # Data Quality tab (reads system.data_quality_monitoring.table_results — grant SELECT
+  # on that TABLE; a schema-level grant fails with "does not have MANAGE on Schema").
   - name: FINOPS_FEATURE_DQM
     value: "true"
   # (Acknowledge / dismiss on alerts is BUILT IN — it always ships with the app,

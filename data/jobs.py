@@ -738,6 +738,29 @@ def _empty(message: str) -> dict[str, Any]:
     return {"jobs": [], "message": message}
 
 
+def _metrics_failure_message(detail: str) -> str:
+    """Honest reason the Jobs run-metrics read failed. The old message always
+    blamed a missing grant — including when the real error was the 25 MiB inline
+    result limit on a large estate, which sent customers re-running grants they
+    already had."""
+    d = (detail or "").lower()
+    if "insufficient_permissions" in d or "permission_denied" in d or "does not have" in d:
+        return (
+            "Jobs tab needs read access to system.lakeflow.job_run_timeline. "
+            "Ask an admin to grant the app: GRANT USE CATALOG ON CATALOG system TO `<app-service-principal>`; "
+            "GRANT USE SCHEMA, SELECT ON SCHEMA system.lakeflow TO `<app-service-principal>`. "
+            f"(live read failed — {detail})"
+        )
+    if "table_or_view_not_found" in d or "does not exist" in d:
+        return ("Jobs tab couldn't find system.lakeflow.job_run_timeline — the lakeflow system schema "
+                f"may not be enabled on this metastore. (live read failed — {detail})")
+    if "still running after" in d:
+        return ("Jobs tab timed out reading system.lakeflow.job_run_timeline — the estate is too large for an "
+                "on-demand scan on this warehouse. Run the nightly gold sync job (it pre-computes this tab) "
+                f"or use a larger SQL warehouse. (live read failed — {detail})")
+    return f"Jobs tab couldn't read system.lakeflow.job_run_timeline. (live read failed — {detail})"
+
+
 def jobs_live(warehouse_id: str) -> dict[str, Any]:
     """Real jobs from system.lakeflow.job_run_timeline (+ billing cost). FAIL-SOFT:
     returns {"jobs": [...], "message": ""} on success, or an empty list + an
@@ -748,48 +771,72 @@ def jobs_live(warehouse_id: str) -> dict[str, Any]:
     identical in both modes (detail arrays are left empty in live for now)."""
     from data import live  # lazy — demo mode never needs the SDK
 
-    # 1) Run metrics (required). If this fails, the tab has nothing to show —
-    #    return an empty, well-formed payload with the fix.
-    try:
-        metric_rows = live._run(warehouse_id, _RUN_METRICS_SQL, "system.lakeflow.job_run_timeline")
-    except Exception as e:  # noqa: BLE001 - fail soft
-        detail = getattr(e, "detail", str(e))
-        return _empty(
-            "Jobs tab needs read access to system.lakeflow.job_run_timeline. "
-            "Ask an account admin to grant the app: GRANT USE SCHEMA ON SCHEMA system.lakeflow, "
-            "SELECT ON TABLE system.lakeflow.job_run_timeline TO `<app-service-principal>`. "
-            f"(live read failed — {detail})"
-        )
+    # The five independent reads (run metrics, cost, cost trend, workspace names,
+    # BU mapping) used to run one after another — each a full system-table scan
+    # behind its own poll loop. They don't depend on each other, so run them
+    # concurrently: the tab now costs roughly the slowest one, not the sum.
+    from concurrent.futures import ThreadPoolExecutor
 
-    # 2) Cost (best-effort). Missing billing grant just means $0 attribution —
-    #    the run-health signals still render.
-    cost_by_job: dict[tuple[str, str], dict[str, Any]] = {}
-    try:
+    def _cost_rows() -> list[dict[str, Any]]:
         try:
-            cost_rows = live._run(warehouse_id, _COST_SQL, "system.billing.usage (jobs cost)")
+            return live._run(warehouse_id, _COST_SQL, "system.billing.usage (jobs cost)")
         except live.LiveError:
-            cost_rows = live._run(warehouse_id, _COST_SQL_NOFEATURES, "system.billing.usage (jobs cost, no features)")
-        for c in cost_rows:
-            cost_by_job[(str(c.get("workspace_id")), str(c.get("job_id")))] = {
-                "cost": live._f(c.get("cost")),
-                "product": str(c.get("product") or ""),
-                "is_serverless": bool(live._f(c.get("is_serverless"))),
-                "is_dlt": bool(live._f(c.get("is_dlt"))),
-            }
-    except Exception:  # noqa: BLE001 - cost is optional
-        cost_by_job = {}
+            return live._run(warehouse_id, _COST_SQL_NOFEATURES, "system.billing.usage (jobs cost, no features)")
 
-    # Per-job monthly cost trend (best-effort) → cost-anomaly detection live.
-    trend_by_job: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    try:
-        for c in live._run(warehouse_id, _COST_TREND_SQL, "system.billing.usage (jobs cost trend)"):
-            key = (str(c.get("workspace_id")), str(c.get("job_id")))
-            trend_by_job.setdefault(key, []).append(
-                {"month": str(c.get("month") or ""), "cost_usd": round(live._f(c.get("cost")), 2)})
-        for v in trend_by_job.values():
-            v.sort(key=lambda x: x["month"])   # oldest→newest, as _build_row expects
-    except Exception:  # noqa: BLE001 - trend is optional
-        trend_by_job = {}
+    live.warm_auth()
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="jobs-live") as pool:
+        f_metrics = pool.submit(live._run, warehouse_id, _RUN_METRICS_SQL, "system.lakeflow.job_run_timeline")
+        f_cost = pool.submit(_cost_rows)
+        f_trend = pool.submit(live._run, warehouse_id, _COST_TREND_SQL, "system.billing.usage (jobs cost trend)")
+        f_names = pool.submit(live._workspace_names, warehouse_id)
+        f_bu = pool.submit(live._workspace_bu, warehouse_id)
+
+        # 1) Run metrics (required). If this fails, the tab has nothing to show —
+        #    return an empty, well-formed payload with an honest reason. Only a
+        #    real permission error gets the "grant" advice; anything else (result
+        #    size, timeout, warehouse stopped) says what actually happened.
+        try:
+            metric_rows = f_metrics.result()
+        except Exception as e:  # noqa: BLE001 - fail soft
+            return _empty(_metrics_failure_message(getattr(e, "detail", str(e))))
+
+        # 2) Cost (best-effort). Missing billing grant just means $0 attribution —
+        #    the run-health signals still render.
+        cost_by_job: dict[tuple[str, str], dict[str, Any]] = {}
+        try:
+            for c in f_cost.result():
+                cost_by_job[(str(c.get("workspace_id")), str(c.get("job_id")))] = {
+                    "cost": live._f(c.get("cost")),
+                    "product": str(c.get("product") or ""),
+                    "is_serverless": bool(live._f(c.get("is_serverless"))),
+                    "is_dlt": bool(live._f(c.get("is_dlt"))),
+                }
+        except Exception:  # noqa: BLE001 - cost is optional
+            cost_by_job = {}
+
+        # Per-job monthly cost trend (best-effort) → cost-anomaly detection live.
+        trend_by_job: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        try:
+            for c in f_trend.result():
+                key = (str(c.get("workspace_id")), str(c.get("job_id")))
+                trend_by_job.setdefault(key, []).append(
+                    {"month": str(c.get("month") or ""), "cost_usd": round(live._f(c.get("cost")), 2)})
+            for v in trend_by_job.values():
+                v.sort(key=lambda x: x["month"])   # oldest→newest, as _build_row expects
+        except Exception:  # noqa: BLE001 - trend is optional
+            trend_by_job = {}
+
+        # Friendly workspace names (fail-soft to id) so the UI shows name + id (#13),
+        # and the BU per workspace from the customer mapping: a job inherits its
+        # workspace's BU. {} when no mapping is configured (BU stays "—").
+        try:
+            ws_names = f_names.result()
+        except Exception:  # noqa: BLE001
+            ws_names = {}
+        try:
+            bu_by_ws = f_bu.result()
+        except Exception:  # noqa: BLE001
+            bu_by_ws = {}
 
     # The "Dur trend" sparkline is fetched AFTER row assembly + attention-ranking,
     # scoped to just the top-N job ids the list actually ships (see below) — a daily
@@ -797,20 +844,6 @@ def jobs_live(warehouse_id: str) -> dict[str, Any]:
     # empty trend here and back-filled once we know which jobs survive the cap.
     dur_trend_by_job: dict[tuple[str, str], list[float]] = {}
     dur_trend_objs_by_job: dict[tuple[str, str], list[dict[str, Any]]] = {}
-
-    # Friendly workspace names (fail-soft to id) so the UI shows name + id (#13).
-    try:
-        ws_names = live._workspace_names(warehouse_id)
-    except Exception:  # noqa: BLE001
-        ws_names = {}
-    # Business unit per workspace, from the customer BU mapping. A job inherits
-    # its workspace's BU (a job runs IN a workspace, which IS assigned a BU) —
-    # was hardcoded "—", which left the Jobs BU column/filter empty even when the
-    # workspace had a BU. {} when no mapping configured (BU stays "").
-    try:
-        bu_by_ws = live._workspace_bu(warehouse_id)
-    except Exception:  # noqa: BLE001
-        bu_by_ws = {}
 
     rows: list[dict[str, Any]] = []
     for r in metric_rows:

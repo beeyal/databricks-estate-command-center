@@ -220,8 +220,11 @@ export function DqmPage() {
           <p className="text-neutral leading-relaxed">
             This tab reads Lakehouse Monitoring results from <span className="font-mono">system.data_quality_monitoring</span>,
             which either isn't enabled on this metastore or the app hasn't been granted read access to it. Once an admin
-            enables it and grants the app <span className="font-mono">SELECT</span> on that schema, monitors, drift and the
-            DQM cost tie-in appear here automatically. Nothing else in the app is affected.
+            enables it and grants the app <span className="font-mono">SELECT</span> on the{" "}
+            <span className="font-mono">system.data_quality_monitoring.table_results</span> table, monitors and the
+            DQM cost tie-in appear here automatically. Grant on the table, not the schema: Databricks owns that schema,
+            so a schema-level grant fails with "does not have MANAGE on Schema" even for metastore admins. Nothing else
+            in the app is affected.
           </p>
         </div>
       ) : (

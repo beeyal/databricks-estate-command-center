@@ -72,9 +72,18 @@ class LiveProvider:
     closed (503 with the exact grant/config to fix) — never falls back to demo.
     """
 
-    def __init__(self, warehouse_id: str) -> None:
+    def __init__(self, warehouse_id: str, gold_schema: str = "") -> None:
         self.wh = warehouse_id
+        # When set (the app passes its gold schema), the inputs the nightly gold
+        # job ALREADY precomputes — workspaces, queries, tables, access grants,
+        # cost drivers, classification — are read from gold instead of re-running
+        # each estate-wide scan. Blank in the gold job itself, which must compute
+        # fresh (it's what writes those snapshots).
+        self.gold = gold_schema
         self._cache: dict[str, Any] = {}
+        import threading
+        self._lock = threading.Lock()
+        self._key_locks: dict[str, Any] = {}
 
     def reset_cache(self) -> None:
         """Drop the per-instance query memo so the next hub build re-reads live
@@ -83,27 +92,66 @@ class LiveProvider:
         self._cache.clear()
 
     def _memo(self, key: str, fn):
-        if key not in self._cache:
-            self._cache[key] = fn()
+        # Thread-safe single-flight per key: estate_metrics() now prefetches its
+        # inputs concurrently, and a key must still be computed exactly once.
+        if key in self._cache:
+            return self._cache[key]
+        with self._lock:
+            klock = self._key_locks.setdefault(key, __import__("threading").Lock())
+        with klock:
+            if key not in self._cache:
+                self._cache[key] = fn()
         return self._cache[key]
+
+    def _gold_or(self, gold_key: str, fn):
+        """Serve a builder's output from its nightly gold snapshot when the app
+        has one (same builder, same shape), else compute live."""
+        if self.gold:
+            from data.gold import is_degraded_payload
+            hit = live.read_gold(self.wh, self.gold, gold_key)
+            if hit is not None and not is_degraded_payload(hit[0]):
+                return hit[0]
+        return fn()
 
     # --- direct passthroughs to validated live builders ---------------------
     def get_workspaces(self) -> list[dict[str, Any]]:
-        return self._memo("ws", lambda: live.workspaces_live(self.wh))
+        return self._memo("ws", lambda: self._gold_or("workspaces", lambda: live.workspaces_live(self.wh)))
 
     def get_queries(self) -> list[dict[str, Any]]:
-        return self._memo("q", lambda: live.queries_live(self.wh))
+        return self._memo("q", lambda: self._gold_or("queries", lambda: live.queries_live(self.wh)))
 
     def get_tables(self) -> list[dict[str, Any]]:
-        return self._memo("t", lambda: live.tables_live(self.wh))
+        return self._memo("t", lambda: self._gold_or("tables", lambda: live.tables_live(self.wh)))
 
     def get_cost_drivers(self, workspace: str | None = None) -> dict[str, Any]:
-        return self._memo("cd", lambda: live.cost_drivers_live(self.wh))
+        return self._memo("cd", lambda: self._gold_or("cost-drivers", lambda: live.cost_drivers_live(self.wh, None)))
+
+    def _access(self) -> dict[str, Any]:
+        return self._memo("access", lambda: self._gold_or("access-grants", lambda: live.access_grants_live(self.wh)))
+
+    def _classification(self) -> dict[str, Any]:
+        return self._memo("cls", lambda: self._gold_or("classification", lambda: live.classification_live(self.wh)))
+
+    def prefetch(self) -> None:
+        """Run every independent input read concurrently (they used to run one
+        after another — ~8 estate-wide scans back to back on a cold build).
+        Errors propagate on the sequential access that follows."""
+        from concurrent.futures import ThreadPoolExecutor
+        live.warm_auth()
+        fns = (self.get_workspaces, self.get_queries, self.get_tables, self._access,
+               self._classification, self._tag_coverage, self._compute_mix, self.get_cost_drivers)
+        with ThreadPoolExecutor(max_workers=len(fns), thread_name_prefix="hub-live") as ex:
+            futs = [ex.submit(f) for f in fns]
+            for f in futs:
+                try:
+                    f.result()
+                except Exception:  # noqa: BLE001 — re-raised by the real (sequential) read
+                    pass
 
     # --- risks: map the live over-privileged signal to the demo risk kinds ---
     def get_risks(self) -> list[dict[str, Any]]:
         def build() -> list[dict[str, Any]]:
-            raw = live.access_grants_live(self.wh)["risks"]
+            raw = self._access()["risks"]
             out: list[dict[str, Any]] = []
             for r in raw:
                 # live emits "Over-privileged on production"; rec_hub keys on the
@@ -186,7 +234,7 @@ class LiveProvider:
     # --- governance report: system-table tiles only (no admin-API controls) --
     def get_governance_report(self) -> dict[str, Any]:
         def build() -> dict[str, Any]:
-            cls = live.classification_live(self.wh)
+            cls = self._classification()
             cov = self._tag_coverage()
             total_spend = sum(v["spend"] for v in cov.values()) or 1.0
             total_untagged = sum(v["untagged"] for v in cov.values())
@@ -243,6 +291,7 @@ class LiveProvider:
     # --- the estate-metrics rollup the strategic-play triggers reference -----
     def estate_metrics(self) -> dict[str, Any]:
         def build() -> dict[str, Any]:
+            self.prefetch()
             workspaces = self.get_workspaces()
             queries = self.get_queries()
             tables = self.get_tables()

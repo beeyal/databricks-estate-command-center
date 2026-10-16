@@ -65,6 +65,21 @@ def _encode_payload(payload: Any) -> str:
     return live.GOLD_GZIP_SENTINEL + packed
 
 
+_GOLD_WORKERS = 4
+
+
+def is_degraded_payload(payload: Any) -> bool:
+    """True for a fail-soft builder's error payload: an EMPTY primary list plus a
+    ``message`` explaining why (jobs / warehouses / clusters return this shape
+    instead of raising). Such payloads must never be cached or snapshotted."""
+    if not isinstance(payload, dict) or not payload.get("message"):
+        return False
+    for k in ("jobs", "warehouses", "clusters"):
+        if k in payload:
+            return not payload.get(k)
+    return False
+
+
 def _ingest_schema() -> str:
     """Optional admin-sync ingest schema for governance's admin-API panels.
     Blank ⇒ governance still builds (the system-table portion); the admin panels
@@ -78,14 +93,18 @@ def _jobs_live(warehouse_id: str) -> Any:
     return jobs.jobs_live(warehouse_id)
 
 
-def _hub_live(warehouse_id: str) -> Any:
+def _hub_live(warehouse_id: str, gold_schema: str = "") -> Any:
     """Recommendation hub for gold — install the live provider, then build the
     UNFILTERED hub (all defaults). The app applies workspace/priority/category
     filters in-process over this snapshot, so the unfiltered payload is the one
     to cache (mirrors app.py's `_live_payload_cached("hub", …)` unfiltered path)."""
     from data import rec_hub
     from data.rec_hub_live import LiveProvider
-    rec_hub.set_provider(LiveProvider(warehouse_id))
+    # Built AFTER the other payloads (see run_gold) with the gold schema, so its
+    # inputs (workspaces, queries, tables, access, cost drivers, classification)
+    # are read from the snapshots this same run just wrote instead of being
+    # recomputed a second time.
+    rec_hub.set_provider(LiveProvider(warehouse_id, gold_schema))
     return rec_hub.build_hub()
 
 
@@ -99,7 +118,9 @@ def _payload_builders(warehouse_id: str) -> dict[str, Callable[[], Any]]:
         "cost-drivers": lambda: live.cost_drivers_live(warehouse_id, None),
         "workspaces": lambda: live.workspaces_live(warehouse_id),
         "tables": lambda: live.tables_live(warehouse_id),
-        "queries": lambda: live.queries_live(warehouse_id),
+        "queries": lambda: live.queries_live(warehouse_id),          # 7d (also feeds the hub)
+        "queries:1d": lambda: live.queries_live(warehouse_id, 1),    # Query Advisor 24h chip (default)
+        "queries:30d": lambda: live.queries_live(warehouse_id, 30),  # Query Advisor 30d chip
         "adoption": lambda: live.adoption_live(warehouse_id),
         "classification": lambda: live.classification_live(warehouse_id),
         "dqm": lambda: live.dqm_live(warehouse_id),
@@ -110,7 +131,6 @@ def _payload_builders(warehouse_id: str) -> dict[str, Callable[[], Any]]:
         # UNFILTERED payload (the app applies workspace/priority/status filters
         # in-process over the snapshot, exactly as it does off the runtime cache).
         "jobs": lambda: _jobs_live(warehouse_id),
-        "hub": lambda: _hub_live(warehouse_id),
         "governance": lambda: live.governance_live(warehouse_id, _ingest_schema()),
     }
     # NB: Warehouse Monitor + Cluster Efficiency are NOT snapshot payloads here —
@@ -380,17 +400,42 @@ def run_gold(warehouse_id: str, gold_schema: str) -> dict[str, str]:
             f"CREATE on the catalog (to make the schema) + CREATE/MODIFY on {gold_schema}. "
             f"Underlying error: {str(e)[:160]}")
 
-    for key, build in _payload_builders(warehouse_id).items():
+    def _build_and_write(key: str, build: Callable[[], Any]) -> str:
         try:
             payload = build()
+            # A fail-soft builder returns an EMPTY payload + message when its
+            # required read failed (missing grant, result-size limit, timeout).
+            # Writing that as the snapshot made the app serve the error all day —
+            # even after the grant was fixed. Keep the previous good snapshot.
+            if is_degraded_payload(payload):
+                return f"skipped (kept previous snapshot): {str(payload.get('message'))[:160]}"
             body = _sql_str(_encode_payload(payload))
-            live._run(warehouse_id, f"DELETE FROM {gold_schema}.finops_gold WHERE key = {_sql_str(key)}", f"clear {key}")
+            # One atomic MERGE instead of DELETE-then-INSERT: no window where the
+            # key is missing (a request in that window fell through to a full live
+            # scan) and one statement instead of two.
             live._run(warehouse_id,
-                f"INSERT INTO {gold_schema}.finops_gold (key, payload, snapshot_at) "
-                f"VALUES ({_sql_str(key)}, {body}, current_timestamp())", f"write {key}")
-            status[key] = "ok"
+                f"MERGE INTO {gold_schema}.finops_gold t "
+                f"USING (SELECT {_sql_str(key)} AS key, {body} AS payload, current_timestamp() AS snapshot_at) s "
+                "ON t.key = s.key "
+                "WHEN MATCHED THEN UPDATE SET t.payload = s.payload, t.snapshot_at = s.snapshot_at "
+                "WHEN NOT MATCHED THEN INSERT (key, payload, snapshot_at) VALUES (s.key, s.payload, s.snapshot_at)",
+                f"write {key}")
+            return "ok"
         except Exception as e:  # noqa: BLE001 — one bad key never fails the run
-            status[key] = f"skipped: {str(e)[:120]}"
+            return f"skipped: {str(e)[:120]}"
+
+    # The payload builds are independent, so run a few at once (the batch job
+    # used to build all 14 one after another). Bounded so we don't flood a small
+    # warehouse; each build already parallelises its own reads where it can.
+    builders = _payload_builders(warehouse_id)
+    live.warm_auth()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_GOLD_WORKERS, thread_name_prefix="gold") as ex:
+        futs = {key: ex.submit(_build_and_write, key, build) for key, build in builders.items()}
+        for key in builders:
+            status[key] = futs[key].result()
+    # The Recommendations hub aggregates the payloads above, so build it last,
+    # reading them back from gold.
+    status["hub"] = _build_and_write("hub", lambda: _hub_live(warehouse_id, gold_schema))
 
     try:
         sz = build_table_sizes(warehouse_id, gold_schema)

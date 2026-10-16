@@ -191,8 +191,11 @@ def get_acks(warehouse_id: str = "", source: str | None = None) -> dict[str, dic
         return {}
     try:
         b = _backend()
-        rows = _DEMO_rows(source) if b == "demo" else (
-            _delta_rows(warehouse_id, source) if b == "delta" else _lakebase_rows(source))
+        if b == "demo":
+            rows = _DEMO_rows(source)
+        else:
+            rows = [dict(r) for r in _all_acks_cached(warehouse_id, b)
+                    if source is None or r.get("source") == source]
         if source is None:
             return {f"{r.get('source','')}::{r['entity_key']}": r for r in rows}
         return {r["entity_key"]: r for r in rows}
@@ -200,8 +203,32 @@ def get_acks(warehouse_id: str = "", source: str | None = None) -> dict[str, dic
         # Log the real reason (a swallowed permission/schema error here is why an
         # ack silently won't persist) but still degrade gracefully to "no acks".
         _reset_lakebase_ensured()  # a bad connection may mean the DDL must re-run
+        _reset_delta_ensured()
         _log.warning("writeback get_acks failed (%s backend): %s", _backend_safe(), e)
         return {}
+
+
+# Every alert tab (and the Overview) reads the ack overlay on EVERY request. On
+# the Delta backend that was a warehouse round-trip per page load (plus four DDL
+# statements, see _delta_ensure). Acks change only through this process's own
+# put/delete (which invalidate below), so read the whole (small) table once and
+# hold it briefly. 30s bounds staleness if a second app replica ever writes.
+_ACK_MEMO_TTL_S = 30.0
+_ack_memo: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+
+
+def _all_acks_cached(warehouse_id: str, backend: str) -> list[dict[str, Any]]:
+    import time
+    hit = _ack_memo.get(backend)
+    if hit is not None and time.monotonic() - hit[0] < _ACK_MEMO_TTL_S:
+        return hit[1]
+    rows = _delta_rows(warehouse_id, None) if backend == "delta" else _lakebase_rows(None)
+    _ack_memo[backend] = (time.monotonic(), rows)
+    return rows
+
+
+def _invalidate_acks() -> None:
+    _ack_memo.clear()
 
 
 def put_ack(warehouse_id: str, rec: dict[str, Any]) -> bool:
@@ -218,9 +245,12 @@ def put_ack(warehouse_id: str, rec: dict[str, Any]) -> bool:
             _delta_put(warehouse_id, rec)
         else:
             _lakebase_put(rec)
+        _invalidate_acks()
         return True
     except Exception as e:  # noqa: BLE001
         _reset_lakebase_ensured()
+        _reset_delta_ensured()
+        _invalidate_acks()
         _log.warning("writeback put_ack failed (%s backend): %s", _backend_safe(), e)
         return False
 
@@ -237,9 +267,12 @@ def delete_ack(warehouse_id: str, source: str, entity_key: str) -> bool:
             _delta_delete(warehouse_id, source, entity_key)
         else:
             _lakebase_delete(source, entity_key)
+        _invalidate_acks()
         return True
     except Exception as e:  # noqa: BLE001
         _reset_lakebase_ensured()
+        _reset_delta_ensured()
+        _invalidate_acks()
         _log.warning("writeback delete_ack failed (%s backend): %s", _backend_safe(), e)
         return False
 
@@ -301,6 +334,9 @@ def _delta_ensure(warehouse_id: str) -> None:
     the very hygiene it recommends (dog-fooding PO/LC). Best-effort throughout:
     if the app SP can't CREATE the schema (locked-down catalog), we fall through
     and the existing/ungranted-schema path surfaces via the normal fail-soft."""
+    global _delta_ensured
+    if _delta_ensured:
+        return
     from data import live
     from data import gold
 
@@ -319,6 +355,18 @@ def _delta_ensure(warehouse_id: str) -> None:
         "source STRING, entity_key STRING, status STRING, reason STRING, "
         "metric_name STRING, metric_at_ack DOUBLE, snooze_until STRING, "
         "updated_by STRING, updated_at STRING")
+    _delta_ensured = True
+
+
+# _delta_ensure ran CREATE SCHEMA + CREATE TABLE + two ALTERs before EVERY ack
+# read/write — four extra warehouse round-trips on every alert-tab load. Once per
+# process is enough; reset on any store error so a dropped table is re-created.
+_delta_ensured = False
+
+
+def _reset_delta_ensured() -> None:
+    global _delta_ensured
+    _delta_ensured = False
 
 
 def _sql_str(s: str) -> str:
@@ -579,13 +627,74 @@ _PG_CACHE_TABLE = f"{_PG_SCHEMA}.finops_payload_cache"
 
 
 def cache_available() -> bool:
-    """True only when the Lakebase backend is actually usable as a cache tier.
-    Gated on writeback being enabled AND the lakebase backend being selected —
-    otherwise the payload cache is a no-op (the in-memory TTL cache stands in)."""
+    """True when a persistent payload-cache tier is usable: the Lakebase backend,
+    or — on the DEFAULT Delta deploy, which used to have NO persistent tier, so
+    every restart/redeploy re-paid the 60-180s cold builds — a small Delta table
+    in the writeback schema. Otherwise a no-op (the in-memory TTL cache stands in)."""
     try:
-        return enabled() and _backend() == "lakebase"
+        if not enabled():
+            return False
+        b = _backend()
+        if b == "lakebase":
+            return True
+        return b == "delta" and operational()[0]
     except Exception:  # noqa: BLE001
         return False
+
+
+# Delta payload-cache tier (default deploy). One row per cache key; the payload
+# is stored with the same gzip+base64 codec as gold so a multi-MB payload stays
+# far under the 16 MB statement limit. Reads are one point-lookup per key per
+# COLD process (tier 1 serves everything after), writes are an atomic MERGE.
+_DELTA_CACHE_MAX_ENCODED = 12_000_000
+_delta_cache_ensured = False
+
+
+def _delta_cache_table() -> str:
+    return f"{_writeback_schema()}.finops_payload_cache"
+
+
+def _delta_cache_ensure(warehouse_id: str) -> None:
+    global _delta_cache_ensured
+    if _delta_cache_ensured:
+        return
+    from data import gold
+    gold._ensure_managed_delta(warehouse_id, _delta_cache_table(),
+                               "cache_key STRING, payload STRING, updated_at TIMESTAMP")
+    _delta_cache_ensured = True
+
+
+def _delta_cache_get(key: str) -> tuple[Any, float] | None:
+    from data import live
+    wh = str(config.get_settings().get("warehouse_id") or "")
+    _delta_cache_ensure(wh)
+    rows = live._run(wh,
+        f"SELECT payload, timestampdiff(SECOND, updated_at, current_timestamp()) AS age_s "
+        f"FROM {_delta_cache_table()} WHERE cache_key = {_sql_str(key)}",
+        "payload cache: read")
+    if not rows or rows[0].get("payload") is None:
+        return None
+    payload = live.decode_gold_payload(rows[0]["payload"])
+    if payload is None:
+        return None
+    return payload, live._f(rows[0].get("age_s"))
+
+
+def _delta_cache_put(key: str, payload: Any) -> None:
+    from data import gold, live
+    wh = str(config.get_settings().get("warehouse_id") or "")
+    body = gold._encode_payload(payload)
+    if len(body) > _DELTA_CACHE_MAX_ENCODED:
+        return  # too big to inline in one statement — tier 1 still serves it
+    _delta_cache_ensure(wh)
+    live._run(wh,
+        f"MERGE INTO {_delta_cache_table()} t "
+        f"USING (SELECT {_sql_str(key)} AS cache_key, {gold._sql_str(body)} AS payload) s "
+        "ON t.cache_key = s.cache_key "
+        "WHEN MATCHED THEN UPDATE SET t.payload = s.payload, t.updated_at = current_timestamp() "
+        "WHEN NOT MATCHED THEN INSERT (cache_key, payload, updated_at) "
+        "VALUES (s.cache_key, s.payload, current_timestamp())",
+        "payload cache: write")
 
 
 _lakebase_cache_ensured = False
@@ -608,6 +717,14 @@ def cache_get(key: str) -> tuple[Any, float] | None:
     to serve-and-revalidate. Never raises — the cache is best-effort."""
     if not cache_available():
         return None
+    if _backend() == "delta":
+        try:
+            return _delta_cache_get(key)
+        except Exception as e:  # noqa: BLE001
+            global _delta_cache_ensured
+            _delta_cache_ensured = False
+            _log.warning("payload cache_get (delta) failed (%s): %s", key, e)
+            return None
     try:
         import json
         with _lakebase_conn() as c, c.cursor() as cur:
@@ -632,6 +749,15 @@ def cache_put(key: str, payload: Any) -> bool:
     False (never raises) so a cache write failure can't break a live response."""
     if not cache_available():
         return False
+    if _backend() == "delta":
+        try:
+            _delta_cache_put(key, payload)
+            return True
+        except Exception as e:  # noqa: BLE001
+            global _delta_cache_ensured
+            _delta_cache_ensured = False
+            _log.warning("payload cache_put (delta) failed (%s): %s", key, e)
+            return False
     try:
         import json
         with _lakebase_conn() as c, c.cursor() as cur:

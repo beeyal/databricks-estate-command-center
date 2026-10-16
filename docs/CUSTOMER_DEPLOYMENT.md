@@ -227,8 +227,8 @@ the block below, replace `<app-sp>` with the service principal client ID, and cl
 **Why this matters:** Each tab in the app reads specific system tables. If a grant is missing,
 that tab displays *"needs read access"* with the exact `GRANT` statement to run — it never
 crashes or fabricates data. The Jobs tab is particularly common to miss: it needs
-`system.lakeflow.job_run_timeline`. The Data Quality tab needs tables under
-`system.data_quality_monitoring`. These grants are **required before the tabs show live data**.
+`system.lakeflow.job_run_timeline`. The Data Quality tab needs `SELECT` on the
+`system.data_quality_monitoring.table_results` **table** (a schema-level grant fails — see below). These grants are **required before the tabs show live data**.
 
 **Run this SQL block as an account/metastore admin** (the app's service principal is read-only
 and cannot grant itself access). Replace `<app-sp>` with the service principal client ID you
@@ -340,9 +340,19 @@ that don't apply to you**; most deployments need none of them.
 
 - **Data Quality tab** (`FINOPS_FEATURE_DQM: "true"`) — also run:
   ```sql
-  GRANT USE SCHEMA, SELECT ON SCHEMA system.data_quality_monitoring TO `<app-sp>`;
+  -- Grant on the TABLE only. Do NOT grant on the schema.
   GRANT SELECT ON TABLE system.data_quality_monitoring.table_results TO `<app-sp>`;
   ```
+  **Why table-only:** unlike the other system schemas, `system.data_quality_monitoring` is
+  owned by a Databricks-internal service principal, and Databricks deliberately doesn't give
+  customer admins MANAGE on the schema (it will hold internal tables). Admins *do* get MANAGE
+  on `table_results`. So `GRANT USE SCHEMA, SELECT ON SCHEMA system.data_quality_monitoring …`
+  fails with `PERMISSION_DENIED: User does not have MANAGE on Schema
+  'system.data_quality_monitoring'` — even for an account + metastore admin — and the
+  schema's **Permissions** button in Catalog Explorer is greyed out. `USE SCHEMA` on it is
+  already granted to all account users by Databricks, so the table grant is all you need.
+  Run it as an **account admin** (SQL, or Catalog Explorer → the `table_results` table →
+  Permissions).
   That schema **only exists once someone has enabled anomaly detection** on a schema; if you
   don't use Data Quality Monitoring the grant errors with `SCHEMA_DOES_NOT_EXIST` — in that
   case just leave the tab off (`FINOPS_FEATURE_DQM: "false"` in Step ②) and skip this.

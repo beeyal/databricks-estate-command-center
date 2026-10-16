@@ -68,6 +68,42 @@ class LiveError(Exception):
         super().__init__(f"{source}: {detail}")
 
 
+import threading as _threading
+
+# Small per-process TTL memo for the reference lookups (workspace names, BU and
+# team mappings, warehouse names). They were re-read on EVERY call — 28 call
+# sites across the endpoints, so one Jobs or Overview build re-scanned
+# workspaces_latest several times. Values change rarely; 10 min is plenty fresh,
+# and an empty result (ungranted / not configured / transient failure) is only
+# held for 60s so a fix shows up quickly. Keyed by (function, args).
+_MEMO: dict[tuple, tuple[float, Any]] = {}
+_MEMO_LOCK = _threading.Lock()
+_MEMO_TTL_S = 600.0
+_MEMO_EMPTY_TTL_S = 60.0
+
+
+def _ttl_memo(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args):
+        key = (fn.__name__, args)
+        now = time.time()
+        with _MEMO_LOCK:
+            hit = _MEMO.get(key)
+        if hit is not None:
+            ttl = _MEMO_TTL_S if hit[1] else _MEMO_EMPTY_TTL_S
+            if now - hit[0] < ttl:
+                return hit[1]
+        val = fn(*args)
+        with _MEMO_LOCK:
+            _MEMO[key] = (time.time(), val)
+        return val
+
+    wrapper.cache_clear = lambda: _MEMO.clear()  # type: ignore[attr-defined]
+    return wrapper
+
+
 @lru_cache(maxsize=1)
 def _client():  # lazy import so demo mode never needs the SDK
     try:
@@ -75,6 +111,17 @@ def _client():  # lazy import so demo mode never needs the SDK
     except Exception as e:  # pragma: no cover
         raise LiveError("databricks-sdk", f"SDK not available: {e}")
     return WorkspaceClient()
+
+
+def warm_auth() -> None:
+    """Resolve the SDK credentials once on the calling thread, before fanning
+    reads out to a thread pool — otherwise N threads can race the first token
+    fetch/refresh (seen with CLI auth: concurrent refreshes collide on the token
+    cache). Best-effort; a failure here resurfaces on the real read."""
+    try:
+        _client().config.authenticate()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # INLINE results are capped by the Statement Execution API at 25 MiB — a big
@@ -85,9 +132,17 @@ def _client():  # lazy import so demo mode never needs the SDK
 _INLINE_LIMIT_MARKERS = ("inline byte limit", "disposition=inline", "result size of at most")
 
 
+# Poll cadence after the server-side wait_timeout returns a still-running
+# statement. A flat 3s sleep added up to ~3s of dead time to EVERY slow query
+# (and most endpoints run several in a row); a short back-off returns the result
+# within ~0.25-2s of it finishing instead.
+_POLL_BACKOFF_S = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0)
+
+
 def _poll_to_success(w, resp, source: str):
     """Poll a submitted statement to SUCCEEDED (or fail closed). Returns the final response."""
     deadline = time.time() + (_BATCH_MAX_WAIT_SECONDS if _BATCH else _MAX_WAIT_SECONDS)
+    polls = 0
     while True:
         state_str = getattr(getattr(resp.status, "state", None), "value", str(getattr(resp.status, "state", "")))
         if state_str == "SUCCEEDED":
@@ -98,7 +153,8 @@ def _poll_to_success(w, resp, source: str):
         if time.time() > deadline:
             wait_s = _BATCH_MAX_WAIT_SECONDS if _BATCH else _MAX_WAIT_SECONDS
             raise LiveError(source, f"query still running after {wait_s}s — the estate is too large for a live scan; enable the nightly gold roll-up")
-        time.sleep(3)
+        time.sleep(_POLL_BACKOFF_S[min(polls, len(_POLL_BACKOFF_S) - 1)])
+        polls += 1
         try:
             resp = w.statement_execution.get_statement(resp.statement_id)
         except Exception as e:  # transient SDK/network error → fail-closed as LiveError, not a raw 500
@@ -109,19 +165,37 @@ def _run(warehouse_id: str, sql: str, source: str) -> list[dict[str, Any]]:
     """Execute one read-only statement and return rows as dicts. Fail-closed.
 
     Tries INLINE first (cheapest path); on the API's inline byte-limit error,
-    retries with EXTERNAL_LINKS so large results still return complete."""
+    retries with EXTERNAL_LINKS so large results still return complete, and if
+    those downloads are unreachable, with key-hash shards that each fit inline."""
     if not warehouse_id:
         raise LiveError("warehouse", "no DATABRICKS_WAREHOUSE_ID configured for live mode")
     w = _client()
+    try:
+        return _run_inline(w, warehouse_id, sql, source)
+    except LiveError as e:
+        # Inline results are capped at 25 MiB. Fall back to EXTERNAL_LINKS for the
+        # same SQL; if the presigned-URL download itself is blocked (e.g. a storage
+        # firewall / private-link setup the app container can't reach), fall back
+        # again to running the statement in key-hash shards that each fit inline.
+        if any(m in str(e).lower() for m in _INLINE_LIMIT_MARKERS):
+            try:
+                return _run_external_links(w, warehouse_id, sql, source)
+            except LiveError as ext:
+                if _EXT_DOWNLOAD_FAILED in (ext.detail or ""):
+                    return _run_sharded(w, warehouse_id, sql, source)
+                raise
+        raise
+
+
+def _run_inline(w, warehouse_id: str, sql: str, source: str) -> list[dict[str, Any]]:
+    """INLINE execution + chunk paging only (no fallbacks). Raises LiveError —
+    including on the inline byte-limit — so callers decide how to recover."""
     try:
         resp = w.statement_execution.execute_statement(
             warehouse_id=warehouse_id, statement=sql, wait_timeout="30s",
         )
         resp = _poll_to_success(w, resp, source)
-    except LiveError as e:
-        # Inline results are capped; fall back to EXTERNAL_LINKS for the same SQL.
-        if any(m in str(e).lower() for m in _INLINE_LIMIT_MARKERS):
-            return _run_external_links(w, warehouse_id, sql, source)
+    except LiveError:
         raise
     except Exception as e:
         raise LiveError(source, f"query failed to execute: {e}")
@@ -175,16 +249,23 @@ def _run_external_links(w, warehouse_id: str, sql: str, source: str) -> list[dic
     except LiveError:
         raise
     except Exception as e:
-        raise LiveError(source, f"query failed to execute (external links): {e}")
+        # Tagged as a download-class failure: the same SQL already ran INLINE (and
+        # only failed on size), so a failure here is the EXTERNAL_LINKS path itself.
+        raise LiveError(source, f"{_EXT_DOWNLOAD_FAILED} (external links execute): {e}")
 
     manifest = resp.manifest
     cols = [c.name for c in manifest.schema.columns] if manifest and manifest.schema else []
 
     def _fetch(url: str) -> list:
         # Presigned URLs are pre-authenticated — no auth header (and adding one
-        # can cause the object store to reject the request). Fail closed on error.
-        with urllib.request.urlopen(url, timeout=60) as fh:  # noqa: S310 (trusted DBSQL-issued URL)
-            return _json.loads(fh.read().decode("utf-8")) or []
+        # can cause the object store to reject the request). A download failure
+        # (network/firewall, expired link) is raised as a LiveError tagged with
+        # _EXT_DOWNLOAD_FAILED so _run can fall back to sharded INLINE reads.
+        try:
+            with urllib.request.urlopen(url, timeout=60) as fh:  # noqa: S310 (trusted DBSQL-issued URL)
+                return _json.loads(fh.read().decode("utf-8")) or []
+        except Exception as e:  # noqa: BLE001
+            raise LiveError(source, f"{_EXT_DOWNLOAD_FAILED}: {e}")
 
     rows: list[dict[str, Any]] = []
     stmt_id = resp.statement_id
@@ -208,6 +289,49 @@ def _run_external_links(w, warehouse_id: str, sql: str, source: str) -> list[dic
         except Exception as e:  # noqa: BLE001
             raise LiveError(source, f"external-links paging failed after {chunks} chunk(s): {e}")
     return rows
+
+
+_EXT_DOWNLOAD_FAILED = "external-links download failed"
+_SHARD_START = 8
+_SHARD_MAX = 128
+
+
+def _run_sharded(w, warehouse_id: str, sql: str, source: str) -> list[dict[str, Any]]:
+    """Last-resort reader for a result too big for INLINE when EXTERNAL_LINKS
+    downloads aren't reachable: re-run the statement as N inline shards, each
+    filtered on a hash of the result's first two columns (the row keys in every
+    query here — workspace_id, job_id, warehouse_id, ...). Rows with the same key
+    always land in the same shard and key values are deterministic, so the
+    union is the complete result with no duplicates. If a shard is still too big
+    the shard count doubles, up to _SHARD_MAX; past that we fail closed."""
+    body = sql.strip().rstrip(";")
+    try:
+        probe = w.statement_execution.execute_statement(
+            warehouse_id=warehouse_id, wait_timeout="30s",
+            statement=f"SELECT * FROM ({body}) __probe LIMIT 0")
+        probe = _poll_to_success(w, probe, source)
+    except LiveError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise LiveError(source, f"query failed to execute (shard probe): {e}")
+    cols = [c.name for c in probe.manifest.schema.columns] if probe.manifest and probe.manifest.schema else []
+    if not cols:
+        return []
+    key = ", ".join(f"CAST(__s.`{c}` AS STRING)" for c in cols[:2])
+    k = _SHARD_START
+    while k <= _SHARD_MAX:
+        try:
+            out: list[dict[str, Any]] = []
+            for i in range(k):
+                out.extend(_run_inline(w, warehouse_id,
+                                       f"SELECT * FROM ({body}) __s WHERE pmod(hash({key}), {k}) = {i}",
+                                       f"{source} (shard {i + 1}/{k})"))
+            return out
+        except LiveError as e:
+            if not any(m in str(e).lower() for m in _INLINE_LIMIT_MARKERS):
+                raise
+            k *= 2
+    raise LiveError(source, f"result too large even split {_SHARD_MAX} ways — refine the query window")
 
 
 # Single source of truth for the $/DBU-hour proxy used when a resolved $ rate
@@ -281,13 +405,22 @@ def read_gold(warehouse_id: str, gold_schema: str, key: str) -> tuple[Any, str] 
     # does this for the same value).
     if not gold_schema or not _SCHEMA_RE.match(gold_schema):
         return None
-    try:
-        rows = _run(warehouse_id,
-            f"SELECT payload, CAST(snapshot_at AS STRING) snapshot_at "
-            f"FROM {gold_schema}.finops_gold WHERE key = {key!r}",
-            f"gold read {key}")
-    except Exception:  # noqa: BLE001 — no gold table yet / ungranted → compute live
-        return None
+    sql = (f"SELECT payload, CAST(snapshot_at AS STRING) snapshot_at "
+           f"FROM {gold_schema}.finops_gold WHERE key = {key!r}")
+    rows = None
+    # One retry for a TRANSIENT failure (auth refresh, network blip): a failed
+    # gold read silently drops the request into a full live estate scan (minutes
+    # for the hub/jobs on a big estate), so it's worth a second try. A missing
+    # table/grant fails the same way twice and we fall through as before.
+    for attempt in (1, 2):
+        try:
+            rows = _run(warehouse_id, sql, f"gold read {key}")
+            break
+        except Exception as e:  # noqa: BLE001 — no gold table yet / ungranted → compute live
+            d = str(getattr(e, "detail", e)).upper()
+            if attempt == 2 or "TABLE_OR_VIEW_NOT_FOUND" in d or "PERMISSION" in d or "INSUFFICIENT" in d:
+                return None
+            time.sleep(0.5)
     if not rows:
         return None
     raw = rows[0].get("payload")
@@ -819,6 +952,7 @@ def _workspace_facts(warehouse_id: str) -> list[dict[str, Any]]:
     return out
 
 
+@_ttl_memo
 def _workspace_names(warehouse_id: str) -> dict[str, str]:
     """workspace_id -> workspace_name from system.access.workspaces_latest (PuPr).
     Fail-soft: returns {} if the table is ungranted or system.access isn't enabled
@@ -832,6 +966,7 @@ def _workspace_names(warehouse_id: str) -> dict[str, str]:
         return {}
 
 
+@_ttl_memo
 def _warehouse_names(warehouse_id: str) -> dict[str, str]:
     """warehouse_id -> warehouse_name from system.compute.warehouses (GA, SCD2 —
     take the latest row per warehouse). Fail-soft to {}."""
@@ -879,6 +1014,7 @@ _UC_TABLE_RE = re.compile(r"^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
 _SCHEMA_RE = re.compile(r"^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
 
 
+@_ttl_memo
 def _workspace_bu(warehouse_id: str) -> dict[str, dict[str, str]]:
     """workspace_id -> {"bu", "owner"} from the customer-maintained mapping table
     (config workspace_bu_table). Returns {} when the table isn't configured, the
@@ -923,6 +1059,7 @@ def _workspace_bu(warehouse_id: str) -> dict[str, dict[str, str]]:
     return out
 
 
+@_ttl_memo
 def _user_team(warehouse_id: str) -> dict[str, str]:
     """user -> team from the customer-maintained mapping table (config
     user_team_table). Returns {} when unset/malformed/ungranted — the caller then
