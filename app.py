@@ -1217,6 +1217,7 @@ def get_jobs(
     compute_type: str = Query("all"),
     why: str = Query("all"),        # all | high-setup-queue | failing | spiking | growing | cost-anomaly
     workspace: str = Query("all"),  # workspace name (or "all")
+    workload: str = Query("all"),   # workload type (Batch | Streaming | Interactive / Ad-hoc | ML / AI | Other)
     bu: str = Query("all"),         # business unit (or "all") — from the workspace->BU mapping
     time_range: str = Query("30d"), # run window: 30d | 7d | 24h
     search: str = Query(""),
@@ -1264,9 +1265,17 @@ def get_jobs(
             scaled.append(r)
         rows = scaled
 
-    ct = _multi(compute_type); ws = _multi(workspace); wy = _multi(why); bus = _multi(bu)
+    # Classify each job into an operational workload type (Chris feedback #5):
+    # batch / streaming / interactive / ML-AI, from the job name + its compute.
+    from data import workload as _wl
+    for r in rows:
+        r["workload"] = _wl.classify_job(r.get("job_name", ""), r.get("compute_type"))
+
+    ct = _multi(compute_type); ws = _multi(workspace); wy = _multi(why); bus = _multi(bu); wlf = _multi(workload)
     if ct:
         rows = [r for r in rows if r["compute_type"] in ct]
+    if wlf:
+        rows = [r for r in rows if r.get("workload") in wlf]
     if ws:
         rows = [r for r in rows if _ws_match(r, ws)]
     if bus:
@@ -1286,6 +1295,16 @@ def get_jobs(
     # job (triage) doesn't shrink the estate cost totals — Jobs is a facts view.
     # Only the visible LIST is status-filtered.
     summary = jobs.summarize(rows)
+    # Workload roll-up (Chris feedback #5): jobs + cost by workload type, so the
+    # Jobs view is actionable by batch/streaming/etc. rather than one flat list.
+    _wl_roll: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        b = _wl_roll.setdefault(r.get("workload", "Other"), {"workload": r.get("workload", "Other"), "num_jobs": 0, "cost_usd_month": 0.0})
+        b["num_jobs"] += 1
+        b["cost_usd_month"] += float(r.get("cost_usd_month") or 0)
+    for b in _wl_roll.values():
+        b["cost_usd_month"] = round(b["cost_usd_month"], 2)
+    summary["by_workload"] = sorted(_wl_roll.values(), key=lambda x: -x["cost_usd_month"])
     acks = _acks_for("job")
     ack_sink = _new_counts_sink(acks)
     rows = _apply_acks(

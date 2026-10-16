@@ -641,6 +641,9 @@ export interface JobRow extends AckFields {
   reasons: JobReason[];
   trend: number[];
   detail: JobDetail;
+  // Operational workload type (Chris feedback #5), classified from the job name
+  // + compute: Batch / Streaming / Interactive / Ad-hoc / ML / AI / Other.
+  workload?: string;
 }
 
 export interface JobsByCompute {

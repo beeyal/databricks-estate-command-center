@@ -46,6 +46,12 @@ _PRODUCT_MAP: dict[str, str] = {
     "all-purpose compute": INTERACTIVE,
     "all-purpose": INTERACTIVE,
     "interactive": INTERACTIVE,
+    # Bare job compute-type fallbacks (used by classify_job when the name matches
+    # nothing): a job on jobs/serverless compute is batch by default; all-purpose
+    # jobs are interactive. These never affect the Overview lens, which keys off
+    # full product labels ("Serverless SQL", "Serverless Jobs", …).
+    "jobs (classic)": BATCH,
+    "serverless": BATCH,
     "model serving": ML_AI,
     "foundation model apis": ML_AI,
     "ai gateway": ML_AI,

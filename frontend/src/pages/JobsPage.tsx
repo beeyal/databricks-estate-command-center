@@ -49,6 +49,7 @@ export function JobsPage() {
   const features = useFeatures();
   const buEnabled = useBuEnabled();
   const [computeType, setComputeType] = useState<string[]>([]);
+  const [workload, setWorkload] = useState<string[]>([]);
   const [why, setWhy] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<string[]>([]);
   const [bu, setBu] = useState<string[]>([]);
@@ -64,6 +65,7 @@ export function JobsPage() {
   const { data, loading, error } = useApi(
     () => fetchJobs({
       compute_type: computeType.length ? computeType.join(",") : "all",
+      workload: workload.length ? workload.join(",") : "all",
       why: why.length ? why.join(",") : "all",
       workspace: workspace.length ? workspace.join(",") : "all",
       ...(buEnabled && bu.length ? { bu: bu.join(",") } : {}),
@@ -72,7 +74,7 @@ export function JobsPage() {
       limit: showAll ? "0" : "300",
       ...(features.writeback ? { status } : {}),
     }),
-    [computeType.join(","), why.join(","), workspace.join(","), bu.join(","), timeRange, search, status, ackNonce, showAll],
+    [computeType.join(","), workload.join(","), why.join(","), workspace.join(","), bu.join(","), timeRange, search, status, ackNonce, showAll],
   );
 
   // Workspace filter options — ONLY workspaces that actually have jobs (derived
@@ -118,6 +120,9 @@ export function JobsPage() {
     ) },
     { key: "compute", priority: "medium", header: "Compute", align: "center", sortValue: (r) => r.compute_type, render: (r) => (
       <Pill className={COMPUTE_STYLE[r.compute_type] ?? "bg-border/60 text-neutral"}>{r.compute_type}</Pill>
+    ) },
+    { key: "workload", priority: "high", header: "Workload", align: "center", sortValue: (r) => r.workload ?? "", render: (r) => (
+      r.workload ? <Pill className="bg-accent/10 text-accent">{r.workload}</Pill> : <span className="text-xs text-neutral">—</span>
     ) },
     { key: "runs", priority: "medium", header: `Runs (${timeRange})`, align: "right", sortValue: (r) => r.runs, render: (r) => <span className="tabular-nums">{fmtNum(r.runs, { compact: true })}</span> },
     { key: "fail_rate", priority: "high", header: "Fail rate (30d)", align: "right", sortValue: (r) => r.fail_rate, render: (r) => (
@@ -168,6 +173,13 @@ export function JobsPage() {
           { value: "Serverless", label: "Serverless" },
           { value: "DLT", label: "DLT" },
         ]} allLabel="All compute" />
+        <MultiDropdown label="Workload" value={workload} onChange={setWorkload} options={[
+          { value: "Batch", label: "Batch" },
+          { value: "Streaming", label: "Streaming" },
+          { value: "Interactive / Ad-hoc", label: "Interactive / Ad-hoc" },
+          { value: "ML / AI", label: "ML / AI" },
+          { value: "Other", label: "Other" },
+        ]} allLabel="All workloads" />
         <MultiDropdown label="Why" value={why} onChange={setWhy} options={[
           { value: "high-setup-queue", label: "High setup + queue" },
           { value: "failing", label: "Failing / rising" },
