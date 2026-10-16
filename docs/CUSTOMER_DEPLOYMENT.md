@@ -49,6 +49,7 @@ tools on your laptop. Everything below happens in the Databricks UI.
 | 📊 | **estate-command-center** | The app itself — a small always-on container (~0.5 DBU/hr at `compute_size` MEDIUM, ≈ $270/mo; stop it to pay nothing). A shared multi-region demo workspace can over-report this ~3×. |
 | ⚡ | **1 SQL warehouse** *(you provide — not created by the deploy)* | A serverless SQL warehouse you already have powers the reads; supply its id as `DATABRICKS_WAREHOUSE_ID`. Scales to zero when idle. |
 | 🗄️ | **Gold Delta tables** under `<gold_schema>` (`finops_gold`, `finops_gold_table_sizes`, `finops_gold_warehouse_daily`, `finops_gold_cluster_daily`) | Nightly-precomputed estate payloads (every tab) + a per-table size census + daily-grain warehouse/cluster history, so estate pages load in ~1s instead of re-scanning account-wide system tables per request. **Required in live mode** — populated by the gold-sync job below. |
+| 💾 | **`finops_payload_cache`** (created automatically) | A small cache of each tab's last good result, so a restarted app serves pages straight away instead of recomputing them. On `-t customer` it lives in the bundle's Lakebase instance; on `-t customer-delta` it's a Delta table in your writeback schema (the gold schema unless you set `FINOPS_WRITEBACK_SCHEMA`). Nothing to configure. |
 | 🔁 | **Two scheduled jobs** (`finops_gold_sync` nightly + `estate-command-center-admin-sync` daily) | Gold-sync precomputes the estate payloads (**required for live mode**); admin-sync fills the governance & access panels that don't live in system tables (budgets, policies, tokens, groups). **Both ship paused** — unpause gold-sync for live (admin-sync is optional). |
 
 > [!IMPORTANT]
@@ -145,7 +146,7 @@ The common ones:
 | **`FINOPS_FEATURE_GENIE`** | The **Ask Genie** banner (natural-language Q&A). `/api/genie/ask` goes inert. | Everything else — including the **Genie $** tab (that's Genie *cost attribution* from billing, not the Q&A feature, so it stays). |
 | **`FINOPS_FEATURE_AI_NARRATION`** | The **LLM-written wording** on recommendations, and the Query Advisor's **AI SQL-rewrite** suggestion. | **All recommendations still appear**, with clear rule-based explanations + next steps — just not LLM-phrased. Query Advisor still finds & ranks the queries. |
 | **Both of the above** *(a "no-AI" deploy)* | Only the two rows above. **No LLM endpoint is needed at all** — nothing ever calls a model, so no data-residency/endpoint setup. | A **fully-featured cost & governance console**: every tab, all cost/usage/access/governance data, and the full priority-ranked recommendation engine. |
-| **`FINOPS_FEATURE_DQM`** | The **Data Quality** tab (Lakehouse Monitoring). `/api/dqm` goes inert. | All 13 other tabs. *(Turn this off if you don't use Lakehouse Monitoring — then you can skip its grant in Step ④.)* |
+| **`FINOPS_FEATURE_DQM`** | The **Data Quality** tab (Lakehouse Monitoring). `/api/dqm` goes inert. | All 14 other tabs. *(Turn this off if you don't use Lakehouse Monitoring — then you can skip its grant in Step ④.)* |
 
 *(Acknowledge / dismiss is **built in** — there's no flag to turn it off. The only related choice is where its state is stored, set by the deploy target in Step ③.)*
 
@@ -450,7 +451,7 @@ It's a 2-minute copy-paste:
 
    | Table | Columns | Powers |
    |---|---|---|
-   | `workspace_bu` | `workspace_id`, `bu`, `owner` *(optional)* | Workspaces BU facet + per-BU cost attribution |
+   | `workspace_bu` | `workspace_id`, `bu`, `owner` *(optional)*, `platform` *(optional)*, `environment` *(optional)* | Workspaces BU facet + per-BU cost attribution; the **Business unit** rows of the platform × environment grid; `platform` / `environment` override what the app reads from the workspace name |
    | `user_team` | `user` *(matches `query.history.executed_by`)*, `team` | Adoption Team column + Activity-by-team |
 
 2. **Grant the app's service principal `SELECT`** on the two tables (plus `USE
@@ -458,8 +459,8 @@ It's a 2-minute copy-paste:
    file includes the grant; just set the principal. Without it the app reads
    nothing and silently shows no BU/team (it fails soft — no error, no crash).
    **Grant the `finops_gold_sync` job's service principal too** — in live mode the
-   BU/team join runs when that (required) job precomputes the workspaces/adoption
-   payloads (see the note below).
+   team join runs when that (required) job precomputes the adoption payload (see the
+   note below).
 3. **Point the app at them** — in the **same `app.yaml`** you edited in Step ②, fill in the
    `value:` for these two entries (they're already there, blank):
    ```yaml
@@ -471,12 +472,18 @@ It's a 2-minute copy-paste:
 4. **Redeploy** — re-run the same deploy cell from Step ③.
 
 > [!NOTE]
-> **When the BU/team values appear:** the `bu_enabled`/`team_enabled` toggles (which
-> reveal the facet + Team column) flip on **immediately** after the redeploy. The
-> actual BU/team *values* on the Workspaces and Adoption pages appear as soon as
-> the payload that carries them is (re)built: **after the next `finops_gold_sync`
-> run** (the join happens at precompute time — run the job manually once to see it
-> right away rather than waiting for the nightly schedule).
+> **When the values appear:** the BU facet and Team column switch on **immediately**
+> after the redeploy. BU, platform and environment on the Workspaces, Jobs and Pipelines
+> tabs are applied when the page is served, so edits to `workspace_bu` show up within
+> about 10 minutes. Team values on the Adoption tab are joined when `finops_gold_sync`
+> precomputes that page, so they appear **after the next run** (run the job manually
+> once to see them straight away).
+
+> [!TIP]
+> **Already have `workspace_bu` from an older version?** Add the two optional columns with
+> `ALTER TABLE <your table> ADD COLUMNS (platform STRING, environment STRING);` and fill
+> them in only for workspaces whose names don't say which environment they are. How the
+> app reads names is explained in the README section [Environments and platforms](../README.md#environments-and-platforms--how-workspaces-are-grouped).
 
 > [!NOTE]
 > These are read-only lookups — the app never writes to them. Keep them current on your
@@ -498,11 +505,12 @@ message with the exact grant to run, never a fabricated number.
 | `system.compute.clusters` + `node_timeline` | Cluster Efficiency (interactive-cluster sizing / idle) |
 | `system.access.*` (lineage, audit) | Tables health, Adoption & Value |
 | `system.information_schema.*` | Access grant graph, Governed tags, Data Classification, Governance |
-| `system.data_quality_monitoring` | Data Quality tab *(only if enabled)* |
-| `system.lakeflow.*` | Automated %, top jobs |
+| `system.data_quality_monitoring.table_results` | Data Quality tab *(only if enabled)* |
+| `system.lakeflow.*` | Jobs tab (runs, failures, owners, schedules), Pipelines tab (names, types, updates), Automated % |
+| `system.serving.*` *(optional)* | AI $ **Who is calling** |
 | The admin-sync job → Delta `<ingest_schema>.finops_admin` | Governance budget/policy/PAT/alert tiles, Access groups + PATs, monitor configs |
 | The gold-sync job → Delta `<gold_schema>.finops_gold` | Every estate page, read in sub-second time |
-| Your `workspace_bu` / `user_team` tables *(optional, step ⑥)* | Workspaces BU facet + per-BU cost attribution; Adoption Team column + Activity-by-team |
+| Your `workspace_bu` / `user_team` tables *(optional, step ⑥)* | Workspaces BU facet + per-BU cost attribution; platform / environment overrides for the grid; Adoption Team column + Activity-by-team |
 
 **Ask Genie** (if enabled) streams answers from a **Genie Space** the deploy creates over
 your billing tables — point `GENIE_SPACE_ID` at your own to use an existing one. The
@@ -530,10 +538,23 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
 3. **Run `finops_gold_sync` once** (below). Snapshots written by the older version are
    detected and recomputed on first use, so nothing breaks in the meantime — it's just
    slower until the job has run.
-4. Optional new settings in `app.yaml`: `FINOPS_ENV_TIERS` (how workspace names map to
-   Dev / Test / Pre-prod / Prod — the defaults already recognise `DEV`, `TST`, `TEST`, `UAT`,
-   `QA`, `PPD`, `PREPROD`, `STG`, `PRD`, `PROD`), `FINOPS_WORKSPACE_GROUPS` (naming-convention
-   groups), `FINOPS_EFFECTIVE_DISCOUNT`, and the optional `system.serving` grant (step ④).
+4. **Fix the Data Quality grant** if you ran the old schema-level one: it fails by design,
+   so run the table grant from step ④ instead.
+5. Optional new grant: `system.serving` (step ④) for the AI $ **Who is calling** section.
+6. Optional new settings in `app.yaml` (all blank by default, all safe to leave blank):
+
+   | Setting | What it does |
+   |---|---|
+   | `FINOPS_ENV_TIERS` | How workspace names map to environments. The built-in words already cover Dev (`dev`, `develop`, `development`, `dv`), Test (`tst`, `test`, `testing`, `qa`, `uat`, `sit`, `fat`, `sat`), Pre-prod (`ppd`, `preprod`, `stg`, `stage`, `staging`, `perf`, `prf`), Sandbox (`sbx`, `sandbox`, `lab`, `poc`, `playground`), Non-prod (`nonprod`, `nonprd`, `npd`) and Prod (`prd`, `prod`, `production`, `live`), in any position and with numbered variants such as `DE2` or `TS2`. |
+   | `FINOPS_WORKSPACE_GROUPS` | Roll workspaces up into broader platforms by name prefix, e.g. `"DATA-EDP-:EDP Core;FORE-:Forecasting"`. |
+   | `FINOPS_PLATFORM_STRIP_WORDS` | Technology / region words dropped from the automatic platform name. Default `adb,dbw,databricks,aue,ase,aueast,ausoutheast,ause`; `"-"` keeps every word. |
+   | `FINOPS_ENV_NONPROD_PATTERN` | An extra regex for names that are non-production but carry no environment word. |
+   | `FINOPS_EFFECTIVE_DISCOUNT` | Your blended discount (e.g. `"0.30"`), so figures show effective cost as well as list. |
+   | `FINOPS_WORKLOAD_RULES` | Steer job and pipeline names into Batch / Streaming / Interactive / ML-AI. |
+
+   Two more are read if present but aren't in `app.yaml` by default: `FINOPS_PLATFORM_PATTERN`
+   (a regex with a `(?P<platform>…)` group, for naming conventions the automatic rule can't
+   handle) and `FINOPS_TABLES_LIMIT` (how many tables the Tables tab reads, default 25,000).
 
 > [!IMPORTANT]
 > **After an upgrade, re-run `finops_gold_sync` once.** The Overview, Jobs, Tables and
