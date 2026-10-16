@@ -92,13 +92,15 @@ It ships with a seeded, **Acme-shaped demo dataset** (clearly labelled `DEMO DAT
 
 ## Key capabilities — per page
 
-Nav tabs (up to 14): **Overview · Access · Workspaces · Jobs · Query Advisor · Warehouses · Clusters · Tables · Governance · Adoption & Value · Genie $ · AI $ · Data Quality · Recommendations**. **Data Quality** is a *feature-flagged* tab — it only appears when `features.dqm=true`, so a deployment without it shows 13 tabs (see [Feature flags & deploy variants](#feature-flags--deploy-variants)).
+Nav tabs (up to 15): **Overview · Access · Workspaces · Jobs · Pipelines · Query Advisor · Warehouses · Clusters · Tables · Governance · Adoption & Value · Genie $ · AI $ · Data Quality · Recommendations**. **Data Quality** is a *feature-flagged* tab — it only appears when `features.dqm=true`, so a deployment without it shows 14 tabs (see [Feature flags & deploy variants](#feature-flags--deploy-variants)).
 
 A persistent [**Ask Genie**](#ask-genie) banner sits beneath the nav when `features.genie=true`.
 
 ### Overview
 
 The estate dashboard. A KPI row — **Total spend/mo**, **Savings potential** (`$` + `% of spend`), **Total DBUs/mo**, **Top cost driver** (largest `billing_origin_product` by spend), **#Need attention** (critical health) — over a weekly **spend-and-captured-savings** trend chart, then the [cost-by-driver cost views](#dual-currency--alinta-style-cost-views): **cost by cost-driver (product)**, **monthly trend — top-5 drivers**, and a **driver-change-vs-prior-30-days (%)** bar for **MoM spike detection** (drivers up ≥ 25% MoM fire a cost-spike recommendation). A **Top savings opportunities** rollup ranks the highest-impact recs cross-page (worst queries, worst external tables, most over-privileged principals) and deep-links into the Recommendations hub. This is the *only* page besides Recommendations that carries advice, and only as a teaser. A **USD/AUD** toggle in the header restates every `$` figure.
+
+**Cost by operational lens** re-expresses the same trailing-30-day spend the way a platform team runs it: **by workload** (batch / streaming / interactive / ML-AI — jobs split by job-name rules, pipelines by continuous vs triggered mode), **Classic vs Serverless**, **Production vs Non-production**, **by environment tier** (Dev / Test / Pre-prod / Prod, from the workspace name) and **by naming-convention group** (only when `FINOPS_WORKSPACE_GROUPS` is set). In live mode every lens comes from one billing read, so they all reconcile to the same total. Set `FINOPS_EFFECTIVE_DISCOUNT` to also show effective (post-discount) cost next to list.
 
 ### Access
 
@@ -115,6 +117,7 @@ Plus a **principal directory** (source AIM / SCIM / local, status, last-active),
 
 Workspace-by-workspace analysis mirroring the workspace health check. A sortable, faceted table — **Workspace · Workspace ID · Spend/mo · Savings/mo · Savings % · Automated % · Health · Complexity · trend sparkline** — with facets on complexity, health, search, and customer/BU (the customer/BU facet appears only when a `workspace_bu_table` is configured).
 
+- **Grouping, environment and movement:** each workspace carries its **environment tier** (Dev / Test / Pre-prod / Sandbox / Prod, from name tokens such as `DEV`, `TST`, `UAT`, `PPD`, `STG`, `PRD` — configurable with `FINOPS_ENV_TIERS`), Production / Non-production, and its naming-convention **group** (`FINOPS_WORKSPACE_GROUPS`). A passive **abnormal cost movement** flag marks workspaces whose latest week is ≥ 25% above their own recent average and statistically unusual (z ≥ 1.5). Each workspace links straight to its jobs.
 - **Health rule:** Good ≥ 60% automated, Warning 25–60%, Critical < 25% (automated = scheduled-jobs compute vs interactive/all-purpose). The per-workspace **savings/mo** formula is in [**How the numbers are calculated**](#workspaces--savings--health).
 - **Drill-down** per workspace: product/SKU mix (serverless · DLT-Lakeflow · jobs-classic · all-purpose · SQL warehouse · model serving · apps · FMAPI · PO) with % share; monthly trend; top users / jobs / warehouses by `$`; DBU total; idle %; serverless share; region; #clusters/#warehouses; and the **by-SKU** sub-view with `_AUSTRALIA_EAST` SKUs and `pct_of_total`.
 
@@ -124,7 +127,21 @@ Workspace-by-workspace analysis mirroring the workspace health check. A sortable
 
 **A facts-only, per-job cost & reliability view — no serverless-migration advice.** It answers *"which jobs cost the most, which are failing, and which are getting slower or more expensive?"* straight from `system.lakeflow.jobs` + run timelines and `system.billing.usage`. Per job it surfaces: **cost/mo**, **failure rate** + **rising-failure** trend, **run-time spikes**, **cost growth** (month-over-month cost change), **setup + queue share** of run time, **failed-run `$/mo`** (an estimate — the compute burned by runs that failed), and **cost/run**.
 
+- **Who owns it, and is it still scheduled?** Each job shows its real name, **owner** (run-as / creator), **schedule** (cron / interval / continuous / file-arrival / manual, with a **paused** flag) from `system.lakeflow.jobs`, its **last run** and what started most of its runs. Filters for **environment**, **environment tier** and **schedule** (active / paused / manual).
+- **Activity by environment** — jobs, jobs on an active schedule, and cost per tier (Dev / Test / Pre-prod / …), plus a one-click list of **non-production jobs still on an active schedule** — the list a team works through when turning off DEV / TEST / PRE-PROD jobs nobody has asked for.
+- **Workload type** (batch / streaming / interactive / ML-AI) per job, from name rules (`FINOPS_WORKLOAD_RULES` to steer it).
 - **Deliberately fact-only:** the Jobs tab does **not** flag serverless-migration candidates and does **not** estimate serverless savings. This is intentional — serverless jobs DBUs list at ~2× classic and net cost often *rises*, so a credible serverless saving needs an A/B run, not a static estimate. The page reports the facts an operator needs to decide, and leaves the migration call to them.
+
+### Pipelines
+
+**Cost and health per pipeline — including the pipelines behind SQL materialized views and streaming tables.** Pipeline compute is billed with `usage_metadata.dlt_pipeline_id`, often without a job id (a pipeline on its own schedule, or a `CREATE MATERIALIZED VIEW … SCHEDULE` refresh) and frequently under the **SQL** product on serverless — so it never showed on Jobs (which keys on job id) or Query Advisor (warehouse queries). This tab sums **every billing product carrying the pipeline id** — Lakeflow pipelines, SQL MV/ST refreshes, Lakeflow Connect ingestion, Lakebase synced tables, Vector Search sync — per pipeline, with:
+
+- **cost/mo** (trailing 30 days) and **change vs the prior 30 days**, serverless share, DBUs;
+- **type** (ETL pipeline, materialized view, streaming table, Lakeflow Connect, Lakebase sync, …), owner, continuous vs triggered, development mode, deleted-but-still-billing;
+- **updates in 30 days, failures, full refreshes, last update + result, what triggered it** (job task, SQL refresh, API, manual) from `system.lakeflow.pipeline_update_timeline`;
+- signals: failing, cost spike, full-refresh-heavy, continuous, development mode.
+
+A pipeline run as a job task is **also** counted on the Jobs tab (the same dollars) — the two tabs aren't additive.
 
 ### Query Advisor
 
@@ -165,6 +182,8 @@ Governance also surfaces **Governed Tags + Data Classification**: governed-tag c
 ### AI $
 
 **All AI/GenAI spend a team would investigate, on one page** — Model Serving, Foundation Model APIs, Vector Search, Agent Bricks, AI Functions, and fine-tuning — by product, endpoint, owner, workspace, and trend, from `system.billing.usage`. Carries **cost-optimisation flags** (e.g. endpoints that could scale-to-zero) and a **"% of total platform spend"** context line so AI spend is seen in proportion (it's usually a small slice) rather than in isolation. Genie is on its own **Genie $** page; this page covers the rest of the AI family. Always on (calls no model).
+
+**Who is calling** — billing attributes a shared endpoint (e.g. a pay-per-token Foundation Model API) to its *owner*, so the people actually sending requests never appeared. The AI page now lists every **caller** from `system.serving.endpoint_usage` — requests, tokens and an **estimated** cost share (each endpoint's billed cost split by token share), service principals flagged. The Databricks Assistant isn't metered and Genie (Spaces and Genie Code) is on the Genie $ tab, so heavy Genie / Assistant users won't show here. The window is month to date.
 
 ### Adoption & Value
 
@@ -452,8 +471,10 @@ Demo mode (`USE_LIVE=false`, the default) needs **nothing** — no warehouse, no
 | `system.access.table_lineage` | Tables usage/health, Adoption value map | GA |
 | `system.information_schema.*_privileges` | Access grant graph (table/schema/catalog/routine) | GA |
 | `system.information_schema.{tables,table_tags,column_tags}` | External share, governed tags, `class.*` auto-classification | GA |
-| `system.data_quality_monitoring.table_results` | Data Quality tab only (inventory + status). Deliberately NOT folded into Tables health — DQM has its own tab. | Only if `features.dqm` (degrades gracefully if ungranted) |
-| `system.lakeflow.jobs`, `job_run_timeline`, `job_task_run_timeline` | Automated %, top jobs | GA (`*.pipelines` is PuPr) |
+| `system.data_quality_monitoring.table_results` | Data Quality tab only (inventory + status). Deliberately NOT folded into Tables health — DQM has its own tab. | Only if `features.dqm`. **Grant SELECT on the table, not the schema** — Databricks owns this schema, so a schema grant fails with *"does not have MANAGE on Schema"* even for metastore admins |
+| `system.lakeflow.jobs`, `job_run_timeline` | Jobs tab (runs, failures, cost), job name / owner / schedule / paused, Automated % | GA |
+| `system.lakeflow.pipelines`, `pipeline_update_timeline` | Pipelines tab — names, types, owners, update history (cost comes from `billing.usage`) | PuPr; optional — ids shown if ungranted |
+| `system.serving.endpoint_usage`, `served_entities` | AI $ — **Who is calling** (per-requester requests/tokens) | Optional — the section explains the grant if missing |
 | `DESCRIBE DETAIL <fqn>` | Tables — `numFiles`, `sizeInBytes`, clustering/partition cols | Per-table; not a single system query |
 | `system.billing.usage` (`billing_origin_product = 'GENIE'`, `usage_metadata.genie.surface`) | [Genie $](#genie-cost-attribution) — Code / Spaces / Agents per workspace × user | GA; always on; **live-wired** |
 | `system.billing.usage` (`billing_origin_product = 'DATA_QUALITY_MONITORING'`) + monitor metadata / `information_schema` | [Data Quality](#data-quality) — monitor inventory + DQM cost | Only if `features.dqm` |
@@ -466,6 +487,24 @@ The last three rows are **only** needed for the corresponding feature flag: DQM 
 **For the complete, ready-to-run grant statement → see [Step ④ — Grant system-table access](docs/CUSTOMER_DEPLOYMENT.md#step--grant-the-app-read-access-to-your-data) in the Deployment guide.** It lists every required table by schema and explains which tabs each one powers. If a tab shows *"needs read access"* after deployment, the guide also explains how to diagnose and fix it.
 
 Every API payload carries `demo` / `mode` metadata; the UI renders a **DEMO DATA** badge whenever `USE_LIVE=false`, so demo numbers are never mistaken for live ones.
+
+---
+
+## Performance — how the app stays fast on a large estate
+
+Account-wide system tables are big, so the app avoids scanning them on page load:
+
+| Layer | What it does |
+|---|---|
+| **Nightly gold job** (`finops_gold_sync`) | Precomputes every heavy payload (overview, workspaces, jobs, pipelines, queries per window, access, governance, Genie/AI $, recommendations, cost lenses) into `<gold_schema>.finops_gold`. Builds run four at a time; each key is written atomically (MERGE). A builder that failed (e.g. a missing grant) **keeps the previous good snapshot** instead of overwriting it with an error. |
+| **Gold read memo** | A decoded gold payload is held in memory for 10 min, so filtering and tab switches don't re-read and re-decode multi-MB payloads. Filters (workspace, priority, environment, …) are applied in-process over the cached snapshot — including Recommendations, which used to rebuild the whole estate on every filter change. |
+| **Two-tier payload cache** | Anything not in gold (Warehouse Monitor and Cluster Efficiency windows, first build after an upgrade) is cached in memory for 1 h with stale-while-revalidate, **and persisted** — to Lakebase on the `-t customer-lakebase` target, or to a small Delta table (`<writeback schema>.finops_payload_cache`) on the default target — so a restart or redeploy doesn't re-pay the cold build. |
+| **Short drill-down cache** | Workspace / table / principal / securable drill-downs and single-workspace Genie/AI/cost views are cached for 10 min. |
+| **Parallel reads** | Jobs, Pipelines, AI and the Recommendations inputs run their independent system-table reads concurrently. |
+| **Large results** | Results over the 25 MiB inline limit switch to `EXTERNAL_LINKS`; if those downloads are blocked (storage firewall / private link), the statement is re-run in key-hash shards that each fit inline — never a silent truncation. |
+| **Transport** | JSON responses are gzip-compressed (the Ask Genie stream is not, so it stays token-by-token). |
+
+On fevm (≈90k jobs, ≈24k pipelines): Jobs build 44 s → 25 s; warm page loads ~2.7 s → 0.02–0.3 s; Recommendations filtered view 166 s cold → 0.05 s. If the app still feels slow: confirm the **gold job is scheduled and succeeding** (its output lists `ok` / `skipped` per key), and use a **serverless SQL warehouse** (Small or larger) for the app.
 
 ---
 
@@ -520,6 +559,7 @@ npm run build
 - **Demo data:** everything the UI shows in demo mode comes from `data/generate_demo.py` (seeded, deterministic). Edit the seed data there — the KPI rollups and recommendation feed recompute from it, so numbers stay reconciled across pages.
 - **Recommendation catalogue:** add or tune operator plays in `reference/recommendation_catalog.yaml` (24 plays × 6 categories). Each play declares its trigger, impact, effort, and feature pills; the hub matcher + scorer in `data/rec_hub.py` picks it up automatically.
 - **Feature flags:** flip `FINOPS_FEATURE_GENIE` / `FINOPS_FEATURE_AI_NARRATION` / `FINOPS_FEATURE_DQM` in `app.yaml` to pick a [deploy variant](#feature-flags--deploy-variants); hidden features are inert server-side. Set `genie_space_id` to point Ask Genie at your own Genie Space (blank ⇒ auto-create + auto-discover the FinOps Space in live; demo mode uses canned answers).
+- **Environments & grouping:** `FINOPS_ENV_TIERS` (tier ⇐ name tokens, e.g. `"Dev:dev;Test:tst|uat;Pre-prod:ppd;Prod:prd"`), `FINOPS_ENV_NONPROD_PATTERN` (extra regex), `FINOPS_WORKSPACE_GROUPS` (`"PREFIX:Label;…"`), `FINOPS_WORKLOAD_RULES` (`"regex:Bucket;…"`), `FINOPS_EFFECTIVE_DISCOUNT` (e.g. `0.30`). All optional; see `app.yaml`.
 - **Currency:** every page supports an AUD toggle alongside USD (list-price USD × `fx_rate` in `app.yaml`, clearly labelled).
 - **Theming:** CSS-var tokens in `frontend/src/index.css` + `frontend/tailwind.config.ts` (surface / card / border / accent, dark by default).
 

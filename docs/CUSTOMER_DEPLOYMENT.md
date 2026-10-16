@@ -276,10 +276,15 @@ GRANT SELECT ON TABLE system.information_schema.routine_privileges TO `<app-sp>`
 GRANT SELECT ON TABLE system.information_schema.table_tags TO `<app-sp>`;
 GRANT SELECT ON TABLE system.information_schema.column_tags TO `<app-sp>`;
 
--- Lakeflow (Jobs tab cost & reliability, automated % calculation)
+-- Lakeflow (Jobs tab cost & reliability + job names / owners / schedules,
+-- Pipelines tab names / types / update history, automated % calculation)
 -- ⚠️ Jobs tab will fail with "needs read access" if this grant is missing
 GRANT USE SCHEMA, SELECT ON SCHEMA system.lakeflow TO `<app-sp>`;
 GRANT SELECT ON TABLE system.lakeflow.job_run_timeline TO `<app-sp>`;
+
+-- Model serving (OPTIONAL — AI $ "Who is calling": per-person requests/tokens,
+-- including shared pay-per-token endpoints that billing attributes to the owner)
+GRANT USE SCHEMA, SELECT ON SCHEMA system.serving TO `<app-sp>`;
 
 -- + USE CATALOG / USE SCHEMA on any user catalog you want the Tables page to inspect in detail.
 ```
@@ -293,7 +298,8 @@ GRANT SELECT ON TABLE system.lakeflow.job_run_timeline TO `<app-sp>`;
 | `system.compute` | `clusters`, `node_timeline`, `warehouses` | Cluster Efficiency (sizing/idle/CPU analysis), warehouse queue % & spill detection |
 | `system.access` | `audit`, `table_lineage`, `workspaces_latest` | Tables page (usage/freshness), Adoption & Value map, Access page last-accessed tracking |
 | `system.information_schema` | `tables`, `*_privileges`, `*_tags` | Access page grants graph (who-can-access-what), Governance (certification coverage, data classification), governed tags |
-| `system.lakeflow` | `job_run_timeline` | **Jobs tab** (cost/run, failure rate, runtime spikes, cost growth) — **fails with "needs read access" if missing** |
+| `system.lakeflow` | `job_run_timeline`, `jobs`, `pipelines`, `pipeline_update_timeline` | **Jobs tab** (cost/run, failure rate, runtime spikes, cost growth, owner, schedule, paused) — **fails with "needs read access" if missing**; **Pipelines tab** names, types and update history |
+| `system.serving` *(optional)* | `endpoint_usage`, `served_entities` | AI $ **Who is calling** — who sends requests to each endpoint |
 
 > Reading a Unity Catalog table needs **both** `USE SCHEMA` **and** `SELECT` (plus
 > `USE CATALOG` on `system`) — `SELECT` alone gives `INSUFFICIENT_PERMISSIONS: … does
@@ -516,6 +522,19 @@ Pull the latest code into the Git folder and re-run the deploy cell
 Your settings live in `app.yaml`, outside the code, so an upgrade never disturbs them.
 Use the same target you originally deployed (`-t customer` or `-t customer-delta`).
 
+**Upgrading from a release before October 2026** (check: no **Pipelines** tab):
+
+1. In the workspace Git folder, **pull** the latest `main` (Git folder → branch menu → Pull).
+   The built frontend is committed, so there is nothing to build.
+2. Re-run the deploy cell (`bundle deploy` + `bundle run estate`) with your existing target.
+3. **Run `finops_gold_sync` once** (below). Snapshots written by the older version are
+   detected and recomputed on first use, so nothing breaks in the meantime — it's just
+   slower until the job has run.
+4. Optional new settings in `app.yaml`: `FINOPS_ENV_TIERS` (how workspace names map to
+   Dev / Test / Pre-prod / Prod — the defaults already recognise `DEV`, `TST`, `TEST`, `UAT`,
+   `QA`, `PPD`, `PREPROD`, `STG`, `PRD`, `PROD`), `FINOPS_WORKSPACE_GROUPS` (naming-convention
+   groups), `FINOPS_EFFECTIVE_DISCOUNT`, and the optional `system.serving` grant (step ④).
+
 > [!IMPORTANT]
 > **After an upgrade, re-run `finops_gold_sync` once.** The Overview, Jobs, Tables and
 > Governance tabs serve the **nightly precomputed gold snapshot**, not a live scan — so a
@@ -548,7 +567,12 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
 | Live mode on + configured, but pages are empty | Confirm `DATABRICKS_WAREHOUSE_ID` **and** `FINOPS_GOLD_SCHEMA` are set, that you re-ran the deploy cell, and that you **ran `finops_gold_sync` once** (step ⑤) — live pages serve from gold, which is empty until the first run. |
 | Governance / Access group panels show "run the daily job" | Unpause **estate-command-center-admin-sync** (step ⑤) and let it run once. |
 | **Acknowledge / Reopen buttons do nothing** (or the ack controls disappeared) after you **deleted + recreated** the app | A recreated app gets a **new service principal**, which cannot use the previous SP's writeback schema (Delta: "permission denied"; Lakebase: "permission denied for schema …"). The app now reports writeback **off** with the reason rather than failing silently. **Fix:** for the Lakebase backend set a **fresh** `FINOPS_LAKEBASE_SCHEMA` (e.g. `estate2`) so the new SP creates + owns its own schema, then redeploy; for the Delta backend re-run the `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<new-app-service-principal>\`` from step ④ with the new SP. |
-| Pages slow | Confirm the `finops_gold_sync` job actually ran (step ⑤); the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale or you enabled the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch. |
+| Pages slow | Confirm the `finops_gold_sync` job actually ran **and its output shows `ok`** for each key (step ⑤) — `skipped (kept previous snapshot)` names the failing read; the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale or you enabled the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch. Use a serverless SQL warehouse (Small or larger) for the app. The first load after a redeploy can take longer while the cache warms; after that tab switches and filters are served from memory. |
+| `GRANT … ON SCHEMA system.data_quality_monitoring` fails with **"User does not have MANAGE on Schema"** — even for an account + metastore admin | Expected: Databricks owns that schema and only gives admins MANAGE on the **table**. Run `GRANT SELECT ON TABLE system.data_quality_monitoring.table_results TO \`<app-sp>\`` instead (SQL, or the table's Permissions dialog — the schema's Permissions button is greyed out). |
+| Jobs tab: "**Inline byte limit exceeded**" (often shown with a "needs read access" hint in older versions) | Not a permissions problem — the result was over the 25 MiB inline limit on a large estate. Upgrade (see Upgrades): current versions fall back to `EXTERNAL_LINKS`, then to sharded reads, and only mention grants for a real permission error. Then re-run `finops_gold_sync` so the nightly snapshot is rebuilt. |
+| A tab keeps showing an old error after you fixed a grant | Older versions cached the error (in memory for an hour, and in the nightly snapshot until the next run). Current versions retry within a minute and never snapshot an error; on an older version, re-run `finops_gold_sync` and restart the app. |
+| AI $ doesn't list some people who use AI | Genie (Spaces and Genie Code) is on the **Genie $** tab, and the Databricks Assistant isn't metered. For model-serving / Foundation Model API callers, grant `system.serving` (step ④) so **Who is calling** can read `endpoint_usage`. The window is month to date. |
+| Can't find the cost of a pipeline / materialized view | Use the **Pipelines** tab — MV/ST refreshes are billed with a pipeline id (often under the SQL product), so they're not on Jobs or Query Advisor. |
 | No **BU** facet / no **Team** column | Those are optional (step ⑥). Create the mapping tables from [`reference/mapping_tables_setup.sql`](../reference/mapping_tables_setup.sql), set `workspace_bu_table` / `user_team_table`, grant the app SP `SELECT`, and redeploy. |
 | "Workspace has reached the maximum limit of 300 apps" | The target workspace is full — deploy to another workspace. System-table billing is account-wide, so any workspace in the account sees the same usage. |
 

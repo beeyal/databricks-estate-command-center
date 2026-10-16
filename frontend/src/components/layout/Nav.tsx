@@ -9,6 +9,7 @@ const BASE_TABS: { id: PageId; label: string }[] = [
   { id: "access", label: "Access" },
   { id: "workspaces", label: "Workspaces" },
   { id: "jobs", label: "Jobs" },
+  { id: "pipelines", label: "Pipelines" },
   { id: "queries", label: "Query Advisor" },
   { id: "warehouses", label: "Warehouses" },
   { id: "clusters", label: "Clusters" },

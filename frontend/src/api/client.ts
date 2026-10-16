@@ -28,6 +28,8 @@ import type {
   JobTerminationCode,
   JobDurationPoint,
   JobCostPoint,
+  PipelineRow,
+  PipelinesSummary,
   Overview,
   ExecSummary,
   Pat,
@@ -198,12 +200,28 @@ export function fetchWorkspaceDetail(
 // list — surfaced by the JobsPage instead of an error.
 export interface JobsEnvelope extends Envelope<JobRow[], JobsSummary> {
   message?: string;
+  caveats?: string[];
+  note?: string;
 }
 
 export function fetchJobs(
   params: Record<string, string> = {},
 ): Promise<JobsEnvelope> {
   return getEnvelope<JobRow[], JobsSummary>(`/jobs${qs(params)}`) as Promise<JobsEnvelope>;
+}
+
+// --- Pipelines (Lakeflow + DLT + MV/ST; always on) ---
+export interface PipelinesEnvelope extends Envelope<PipelineRow[], PipelinesSummary> {
+  message?: string;
+  caveats?: string[];
+  list_capped?: { shown: number; total: number };
+  note?: string;
+}
+
+export function fetchPipelines(
+  params: Record<string, string> = {},
+): Promise<PipelinesEnvelope> {
+  return getEnvelope<PipelineRow[], PipelinesSummary>(`/pipelines${qs(params)}`) as Promise<PipelinesEnvelope>;
 }
 
 // Lazy per-job drill-down (recent runs + termination codes + trends). Fetched

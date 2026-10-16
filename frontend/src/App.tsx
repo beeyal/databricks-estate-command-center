@@ -13,6 +13,7 @@ const OverviewPage = lazy(() => import("./pages/OverviewPage").then((m) => ({ de
 const AccessPage = lazy(() => import("./pages/AccessPage").then((m) => ({ default: m.AccessPage })));
 const WorkspacesPage = lazy(() => import("./pages/WorkspacesPage").then((m) => ({ default: m.WorkspacesPage })));
 const JobsPage = lazy(() => import("./pages/JobsPage").then((m) => ({ default: m.JobsPage })));
+const PipelinesPage = lazy(() => import("./pages/PipelinesPage").then((m) => ({ default: m.PipelinesPage })));
 const QueryAdvisorPage = lazy(() => import("./pages/QueryAdvisorPage").then((m) => ({ default: m.QueryAdvisorPage })));
 const WarehousesMonitorPage = lazy(() => import("./pages/WarehousesMonitorPage").then((m) => ({ default: m.WarehousesMonitorPage })));
 const ClustersPage = lazy(() => import("./pages/ClustersPage").then((m) => ({ default: m.ClustersPage })));
@@ -72,6 +73,7 @@ function App() {
           {activePage === "access" && <AccessPage />}
           {activePage === "workspaces" && <WorkspacesPage />}
           {activePage === "jobs" && <JobsPage />}
+          {activePage === "pipelines" && <PipelinesPage />}
           {activePage === "queries" && <QueryAdvisorPage />}
           {activePage === "warehouses" && <WarehousesMonitorPage />}
           {activePage === "clusters" && <ClustersPage />}

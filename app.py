@@ -1444,6 +1444,7 @@ def get_pipelines(
     bu: str = Query("all"),
     search: str = Query(""),
     limit: int = Query(300),             # list cap; 0 = all ("Load all")
+    status: str = Query("open"),         # open | acknowledged | wont_fix | in_progress | all (writeback)
 ) -> dict[str, Any]:
     """Per-pipeline cost + health: Lakeflow pipelines AND the pipelines behind SQL
     materialized views / streaming tables, Lakeflow Connect ingestion and Lakebase
@@ -1483,7 +1484,14 @@ def get_pipelines(
         q = search.lower()
         rows = [r for r in rows if q in str(r.get("name", "")).lower() or q in str(r.get("pipeline_id", "")).lower()
                 or q in str(r.get("owner", "")).lower()]
-    summary = pipelines.summarize(rows)
+    summary = pipelines.summarize(rows)   # facts view: KPIs before the ack/status overlay
+    acks = _acks_for("pipeline")
+    ack_sink = _new_counts_sink(acks)
+    rows = _apply_acks(
+        rows, source="pipeline",
+        key_of=lambda r: f"{r.get('workspace_id','')}:{r.get('pipeline_id','')}",
+        metric_field="cost_usd_month", status_filter=status, acks=acks, counts_sink=ack_sink,
+    )
     rows.sort(key=lambda r: (-len(r.get("reasons") or []), -float(r.get("cost_usd_month") or 0)))
     total = len(rows)
     capped = None
@@ -1501,6 +1509,8 @@ def get_pipelines(
         wrapped["message"] = message
     if note:
         wrapped["note"] = note
+    if ack_sink is not None:
+        wrapped["ack_counts"] = ack_sink
     return wrapped
 
 

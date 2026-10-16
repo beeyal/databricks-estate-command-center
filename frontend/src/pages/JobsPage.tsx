@@ -52,6 +52,9 @@ export function JobsPage() {
   const [workload, setWorkload] = useState<string[]>([]);
   const [why, setWhy] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<string[]>([]);
+  const [environment, setEnvironment] = useState<string[]>([]);
+  const [envTier, setEnvTier] = useState<string[]>([]);
+  const [schedule, setSchedule] = useState("all");
   // Deep-link from a workspace ("view this workspace's jobs"): seed the
   // workspace filter from the store once, then clear it.
   const focusJobsWorkspace = useAppStore((s) => s.focusJobsWorkspace);
@@ -78,13 +81,16 @@ export function JobsPage() {
       workload: workload.length ? workload.join(",") : "all",
       why: why.length ? why.join(",") : "all",
       workspace: workspace.length ? workspace.join(",") : "all",
+      environment: environment.length ? environment.join(",") : "all",
+      env_tier: envTier.length ? envTier.join(",") : "all",
+      schedule,
       ...(buEnabled && bu.length ? { bu: bu.join(",") } : {}),
       time_range: timeRange,
       search,
       limit: showAll ? "0" : "300",
       ...(features.writeback ? { status } : {}),
     }),
-    [computeType.join(","), workload.join(","), why.join(","), workspace.join(","), bu.join(","), timeRange, search, status, ackNonce, showAll],
+    [computeType.join(","), workload.join(","), why.join(","), workspace.join(","), environment.join(","), envTier.join(","), schedule, bu.join(","), timeRange, search, status, ackNonce, showAll],
   );
 
   // Workspace filter options — ONLY workspaces that actually have jobs (derived
@@ -104,6 +110,24 @@ export function JobsPage() {
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }))
       .map((b) => ({ value: b, label: b }));
   }, [allJobs]);
+  // Environment / tier options come from the unfiltered SUMMARY (which covers
+  // every job), not the capped 300-row list — a tier with only low-cost jobs
+  // would otherwise be missing from the dropdown.
+  const tierRollup = allJobs?.summary?.by_env_tier ?? [];
+  const environmentOptions = useMemo(() => {
+    const set = new Set(tierRollup.map((t) => t.environment).filter(Boolean));
+    return Array.from(set).sort().map((e) => ({ value: e, label: e }));
+  }, [tierRollup]);
+  const envTierOptions = useMemo(
+    () => tierRollup.map((t) => ({ value: t.env_tier, label: t.env_tier })),
+    [tierRollup],
+  );
+  const SCHEDULE_OPTIONS = [
+    { value: "all", label: "All schedules" },
+    { value: "active", label: "Active schedule (not paused)" },
+    { value: "paused", label: "Paused" },
+    { value: "manual", label: "Manual / API only" },
+  ];
 
   const rows = data?.data ?? [];
   const summary = data?.summary;
@@ -111,7 +135,7 @@ export function JobsPage() {
   const capped = data?.list_capped;
 
   // Reset "show all" whenever the filters change — a fresh query starts capped.
-  useEffect(() => { setShowAll(false); }, [computeType.join(","), why.join(","), workspace.join(","), bu.join(","), timeRange, search, status]);
+  useEffect(() => { setShowAll(false); }, [computeType.join(","), why.join(","), workspace.join(","), environment.join(","), envTier.join(","), schedule, bu.join(","), timeRange, search, status]);
 
   const columns: Column<JobRow>[] = useMemo(() => [
     { key: "workspace", priority: "critical", header: "Workspace", sortValue: (r) => r.workspace, render: (r) => (
@@ -150,6 +174,24 @@ export function JobsPage() {
     ) },
     { key: "trend", priority: "low", header: (<span className="inline-flex items-center gap-1">Dur trend<InfoTip text="Per-week median run-duration sparkline. Colour shows direction: red = trending up (slower/worse), green = trending down (faster/better), grey = flat." /></span>), align: "center", sortValue: (r) => (r.trend?.length ? r.trend[r.trend.length - 1] : 0), render: (r) => <Sparkline data={r.trend} /> },
     { key: "cost", priority: "critical", header: `Cost (${timeRange})`, align: "right", sortValue: (r) => r.cost_usd_month, render: (r) => <span className="tabular-nums">{fmtMoney(r.cost_usd_month, cur, { compact: true })}</span> },
+    { key: "last_run", priority: "high", header: "Last run", sortValue: (r) => r.last_run ?? "", render: (r) => (
+      <span className="text-xs text-neutral">{r.last_run || "—"}</span>
+    ) },
+    { key: "env", priority: "high", header: "Env", align: "center", sortValue: (r) => r.env_tier ?? "", render: (r) => (
+      r.env_tier && r.env_tier !== "Unclassified"
+        ? <Pill className={r.environment === "Non-production" ? "bg-warning/15 text-warning" : "bg-border/60 text-neutral"}>{r.env_tier}</Pill>
+        : <span className="text-xs text-neutral">—</span>
+    ) },
+    { key: "schedule", priority: "high", header: "Schedule", sortValue: (r) => r.schedule ?? "", render: (r) => (
+      <div className="flex items-center gap-1 flex-wrap" title={r.cron ? `cron: ${r.cron}` : undefined}>
+        {r.schedule && <span className="text-xs text-neutral">{r.schedule}</span>}
+        {r.paused && <Pill className="bg-warning/15 text-warning">paused</Pill>}
+        {!r.schedule && !r.paused && <span className="text-xs text-neutral">—</span>}
+      </div>
+    ) },
+    { key: "owner", priority: "low", header: "Owner", sortValue: (r) => r.owner ?? "", render: (r) => (
+      <span className="text-xs text-neutral">{r.owner || "—"}</span>
+    ) },
     { key: "why", priority: "critical", sortValue: (r) => r.reasons.length * 1e15 + r.cost_usd_month, header: (
       <span className="inline-flex items-center gap-1">Why
         <InfoTip text="Why this job is worth attention — the signals it tripped: 'failing' (≥15% of runs failed in 30d, or the fail rate is rising), 'cost anomaly' (this month ≥2× the job's own recent baseline), 'growing' (run duration trending up over 30 days), 'spiking' (recent runs ≥2× the job's median duration), 'high setup+queue' (a large share of runtime spent warming up / queued rather than executing). 'growing' and 'spiking' only fire on jobs with enough runs (≥10 in 30d) to be a real trend, not noise — the Dur-trend sparkline plots that same 30-day daily duration so the badge and the chart agree. A job can trip several. Blank means no signal — it's running normally." />
@@ -190,6 +232,13 @@ export function JobsPage() {
           { value: "ML / AI", label: "ML / AI" },
           { value: "Other", label: "Other" },
         ]} allLabel="All workloads" />
+        {environmentOptions.length > 0 && (
+          <MultiDropdown label="Environment" value={environment} onChange={setEnvironment} options={environmentOptions} allLabel="All environments" />
+        )}
+        {envTierOptions.length > 0 && (
+          <MultiDropdown label="Env tier" value={envTier} onChange={setEnvTier} options={envTierOptions} allLabel="All tiers" />
+        )}
+        <Dropdown label="Schedule" value={schedule} onChange={setSchedule} options={SCHEDULE_OPTIONS} />
         <MultiDropdown label="Why" value={why} onChange={setWhy} options={[
           { value: "high-setup-queue", label: "High setup + queue" },
           { value: "failing", label: "Failing / rising" },
@@ -219,6 +268,58 @@ export function JobsPage() {
             <div className="card border-l-4 border-l-warning text-sm">
               <span className="text-warning font-medium">Live data unavailable</span>
               <span className="text-neutral ml-2">{message}</span>
+            </div>
+          )}
+
+          {/* Activity by environment tier — the DEV / TEST / PRE-PROD clean-up view.
+              Clicking a tier filters to it; the call-out lists non-production jobs
+              still on an active schedule (they keep running — and billing — until
+              someone pauses them). Computed over the current filters. */}
+          {(summary?.by_env_tier?.length ?? 0) > 0 && (summary?.by_env_tier ?? []).some((t) => t.env_tier !== "Unclassified") && (
+            <div className="card flex flex-col gap-2">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-semibold">Activity by environment</h3>
+                <InfoTip text="Jobs that ran in the window, grouped by the environment tier read from the workspace name (e.g. DEV, TST/UAT, PPD/STG, PRD — configurable with FINOPS_ENV_TIERS). 'Scheduled' = jobs with a time or event trigger that isn't paused, i.e. they'll keep running until someone pauses or deletes them. Click a tier to filter the table." />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(summary?.by_env_tier ?? []).map((t) => {
+                  const active = envTier.length === 1 && envTier[0] === t.env_tier;
+                  return (
+                    <button
+                      key={t.env_tier}
+                      type="button"
+                      onClick={() => setEnvTier(active ? [] : [t.env_tier])}
+                      aria-pressed={active}
+                      className={`text-left rounded-md border px-3 py-2 min-w-[140px] focus-visible:ring-2 focus-visible:ring-accent/60 focus:outline-none ${active ? "border-accent bg-accent/5" : "border-border hover:bg-surface"}`}
+                    >
+                      <div className="text-xs font-medium flex items-center gap-1.5">
+                        {t.env_tier}
+                        {t.environment === "Non-production" && <span className="text-[10px] text-warning">non-prod</span>}
+                      </div>
+                      <div className="text-sm font-semibold tabular-nums">{fmtMoney(t.cost_usd_month, cur, { compact: true })}</div>
+                      <div className="text-[11px] text-neutral tabular-nums">
+                        {fmtNum(t.num_jobs, { compact: true })} jobs · {fmtNum(t.num_scheduled, { compact: true })} scheduled
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              {(summary?.nonprod?.num_scheduled ?? 0) > 0 && (
+                <div className="flex flex-wrap items-center gap-2 text-xs border-t border-border/50 pt-2">
+                  <span className="text-brand-dark">
+                    <span className="font-semibold tabular-nums">{fmtNum(summary!.nonprod!.num_scheduled)}</span> non-production jobs are on an active schedule
+                    {" "}— <span className="font-semibold tabular-nums">{fmtMoney(summary!.nonprod!.scheduled_cost_usd_month, cur, { compact: true })}</span> in this window.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setEnvironment(["Non-production"]); setEnvTier([]); setSchedule("active"); }}
+                    className="pill px-2.5 py-1 border border-border text-neutral hover:text-brand-dark hover:bg-surface focus-visible:ring-2 focus-visible:ring-accent/60 focus:outline-none"
+                  >
+                    Show them
+                  </button>
+                  <span className="text-neutral/70">Pause the ones nobody has asked for; each row shows its owner and last run.</span>
+                </div>
+              )}
             </div>
           )}
 

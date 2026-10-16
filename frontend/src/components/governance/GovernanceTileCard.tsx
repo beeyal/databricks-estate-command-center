@@ -57,6 +57,7 @@ const PAGE_LABEL: Record<GovernancePageId, string> = {
   access: "Access",
   workspaces: "Workspaces",
   jobs: "Jobs",
+  pipelines: "Pipelines",
   queries: "Query Advisor",
   warehouses: "Warehouses",
   clusters: "Clusters",

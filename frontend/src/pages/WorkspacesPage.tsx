@@ -35,6 +35,7 @@ export function WorkspacesPage() {
   const [health, setHealth] = useState<string[]>([]);
   const [grp, setGrp] = useState<string[]>([]);
   const [env, setEnv] = useState<string[]>([]);
+  const [tier, setTier] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const { data, loading, error } = useApi(
     () => fetchWorkspaces({
@@ -42,9 +43,10 @@ export function WorkspacesPage() {
       health: health.length ? health.join(",") : "all",
       group: grp.length ? grp.join(",") : "all",
       environment: env.length ? env.join(",") : "all",
+      env_tier: tier.length ? tier.join(",") : "all",
       search,
     }),
-    [complexity.join(","), health.join(","), grp.join(","), env.join(","), search],
+    [complexity.join(","), health.join(","), grp.join(","), env.join(","), tier.join(","), search],
   );
 
   // BU/Customer options come from a SEPARATE unfiltered fetch (matching Jobs/
@@ -56,10 +58,18 @@ export function WorkspacesPage() {
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
     return set.map((b) => ({ value: b, label: b }));
   }, [allWs]);
-  // Naming-convention group + environment options (#2a/#2b), from the unfiltered set.
+  // Naming-convention group + environment options, from the unfiltered set. The
+  // group facet only appears when grouping is configured (some group isn't "Other").
   const groupOptions = useMemo(() => {
     const set = Array.from(new Set((allWs?.data ?? []).map((r) => r.group).filter(Boolean) as string[])).sort();
-    return set.map((g) => ({ value: g, label: g }));
+    return set.some((g) => g !== "Other") ? set.map((g) => ({ value: g, label: g })) : [];
+  }, [allWs]);
+  const tierOptions = useMemo(() => {
+    const order = ["Prod", "Pre-prod", "Test", "Dev", "Sandbox", "Non-prod", "Unclassified"];
+    const set = Array.from(new Set((allWs?.data ?? []).map((r) => r.env_tier).filter(Boolean) as string[]));
+    const rank = (t: string) => { const i = order.indexOf(t); return i < 0 ? 99 : i; };
+    set.sort((a, b) => rank(a) - rank(b));
+    return set.some((t) => t !== "Unclassified") ? set.map((t) => ({ value: t, label: t })) : [];
   }, [allWs]);
   const envOptions = useMemo(() => {
     const set = Array.from(new Set((allWs?.data ?? []).map((r) => r.environment).filter(Boolean) as string[])).sort();
@@ -103,11 +113,11 @@ export function WorkspacesPage() {
     { key: "savings", header: (<span className="inline-flex items-center gap-1">Savings/mo<InfoTip text="ESTIMATED optimisation headroom, not a measured or realised saving = this workspace's spend × the Savings % heuristic. Validate specific plays on the Recommendations tab before banking any number." /></span>), align: "right", sortValue: (r) => r.savings_usd_month, render: (r) => <span className="tabular-nums text-success">{fmtMoney(r.savings_usd_month, cur, { compact: true })}</span> },
     { key: "savings_pct", header: (<span className="inline-flex items-center gap-1">Savings %<InfoTip text="MODELED headroom estimate (not a measured or realised saving): a heuristic driven by how much of the workspace is un-automated and non-serverless (plus idle share where available) — low automation + low serverless share ⇒ more room to productionise / move to serverless. A directional signal, capped so it never claims an implausibly large fraction; the Recommendations tab has the specific, evidence-backed plays." /></span>), align: "right", sortValue: (r) => r.savings_pct, render: (r) => <span className="tabular-nums">{fmtPct(r.savings_pct)}</span> },
     { key: "automated", header: (<span className="inline-flex items-center gap-1">Automation %<InfoTip text="Share of this workspace's DBUs that run on AUTOMATED compute — scheduled Jobs + DLT/Lakeflow pipelines — vs interactive/all-purpose/SQL. Higher = more of the workload is productionised (typically cheaper + more predictable); low automation is common for exploratory/data-science workspaces and isn't inherently bad." /></span>), sortValue: (r) => r.automated_pct, render: (r) => <ProgressBar value={r.automated_pct} tone="info" /> },
-    { key: "group", header: "Group", priority: "high", sortValue: (r) => r.group ?? "", render: (r) => r.group ? <Pill className="bg-accent/10 text-accent">{r.group}</Pill> : <span className="text-xs text-neutral">—</span> },
-    { key: "environment", header: "Env", align: "center", priority: "high", sortValue: (r) => r.environment ?? "", render: (r) => (
+    ...(groupOptions.length > 0 ? [{ key: "group", header: "Group", priority: "high" as const, sortValue: (r: Workspace) => r.group ?? "", render: (r: Workspace) => r.group ? <Pill className="bg-accent/10 text-accent">{r.group}</Pill> : <span className="text-xs text-neutral">—</span> }] : []),
+    { key: "environment", header: "Env", align: "center", priority: "high", sortValue: (r) => r.env_tier ?? r.environment ?? "", render: (r) => (
       r.environment === "Production"
-        ? <Pill className="bg-success/10 text-success">Prod</Pill>
-        : r.environment ? <Pill className="bg-warning/10 text-warning">Non-prod</Pill> : <span className="text-xs text-neutral">—</span>
+        ? <Pill className="bg-success/10 text-success">{r.env_tier && r.env_tier !== "Unclassified" ? r.env_tier : "Prod"}</Pill>
+        : r.environment ? <Pill className="bg-warning/10 text-warning">{r.env_tier && r.env_tier !== "Unclassified" ? r.env_tier : "Non-prod"}</Pill> : <span className="text-xs text-neutral">—</span>
     ) },
     { key: "complexity", header: "Complexity", align: "center", priority: "medium", sortValue: (r) => r.complexity, render: (r) => <Pill className="bg-border/60 text-neutral">{r.complexity}</Pill> },
     { key: "trend", header: (<span className="inline-flex items-center gap-1">Trend<InfoTip text="Weekly spend sparkline. Colour shows direction: red = spend trending up, green = trending down, grey = flat." /></span>), align: "center", sortValue: (r) => (r.trend?.length ? r.trend[r.trend.length - 1] : 0), render: (r) => <Sparkline data={r.trend} /> },
@@ -168,6 +178,9 @@ export function WorkspacesPage() {
                 )}
                 {envOptions.length > 0 && (
                   <MultiDropdown label="Environment" value={env} onChange={setEnv} options={envOptions} allLabel="All environments" />
+                )}
+                {tierOptions.length > 0 && (
+                  <MultiDropdown label="Env tier" value={tier} onChange={setTier} options={tierOptions} allLabel="All tiers" />
                 )}
                 <SearchBox value={search} onChange={setSearch} placeholder={buEnabled ? "Search workspace or BU…" : "Search workspace…"} />
               </FilterBar>

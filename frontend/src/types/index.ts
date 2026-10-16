@@ -5,6 +5,7 @@ export type PageId =
   | "access"
   | "workspaces"
   | "jobs"
+  | "pipelines"
   | "queries"
   | "warehouses"
   | "clusters"
@@ -226,6 +227,7 @@ export interface Workspace {
   // annotated by the backend from the workspace name via data/grouping.py.
   group?: string;
   environment?: string;
+  env_tier?: string;
 }
 
 // Operational cost lenses. Each bucket is one
@@ -240,7 +242,11 @@ export interface OverviewLenses {
   by_workload: LensBucket[];
   by_compute_type: LensBucket[];
   by_environment: LensBucket[];
+  by_env_tier?: LensBucket[];
   by_group: LensBucket[];
+  groups_configured?: boolean;
+  workload_basis?: string;
+  window?: string;
 }
 
 export interface ProductMixSlice {
@@ -653,6 +659,18 @@ export interface JobRow extends AckFields {
   // Operational workload type, classified from the job name
   // + compute: Batch / Streaming / Interactive / Ad-hoc / ML / AI / Other.
   workload?: string;
+  env_tier?: string;
+  environment?: string;
+  group?: string;
+  schedule?: string;
+  paused?: boolean | null;
+  schedule_active?: boolean;
+  cron?: string;
+  owner?: string;
+  creator?: string;
+  deleted?: boolean;
+  last_run?: string;
+  started_by?: string;
 }
 
 export interface JobsByCompute {
@@ -671,6 +689,66 @@ export interface JobsSummary {
   failed_run_cost_usd_month: number;
   total_cost_usd_month: number;
   by_compute: JobsByCompute[];
+  by_env_tier?: { env_tier: string; environment: string; num_jobs: number; num_scheduled: number; cost_usd_month: number; runs: number }[];
+  nonprod?: { num_jobs: number; num_scheduled: number; cost_usd_month: number; scheduled_cost_usd_month: number };
+}
+
+// --- Pipelines: Lakeflow + DLT + MV/ST (billed with pipeline id) ----------
+
+export type PipelineReason = "failing" | "cost-spike" | "full-refresh-heavy" | "continuous" | "development-mode" | "deleted-still-billing";
+
+export interface PipelineRow extends AckFields {
+  pipeline_id: string;
+  workspace_id: string;
+  workspace: string;
+  bu: string;
+  name: string;
+  pipeline_type: string;
+  type_label: string;
+  owner: string;
+  cost_usd_month: number;
+  prev_cost_usd_month: number;
+  mom_pct: number | null;
+  dbus_month: number;
+  serverless_share: number;
+  serverless: boolean;
+  products: string[];
+  job_attributed: boolean;
+  continuous: boolean;
+  development: boolean;
+  deleted: boolean;
+  updates_30d: number;
+  failed_30d: number;
+  fail_rate: number;
+  full_refreshes_30d: number;
+  last_update: string; // "YYYY-MM-DD HH:MM" or ""
+  last_result: string;
+  triggered_by: string;
+  avg_update_s: number;
+  reasons: PipelineReason[];
+  env_tier: string;
+  environment: string;
+  group: string;
+}
+
+export interface PipelineTypeBreakdown {
+  type: string;
+  num_pipelines: number;
+  cost_usd_month: number;
+}
+
+export interface PipelinesSummary {
+  num_pipelines: number;
+  total_cost_usd_month: number;
+  prev_total_cost_usd_month: number;
+  mom_pct: number | null;
+  serverless_pct: number;
+  num_failing: number;
+  num_continuous: number;
+  num_spiking: number;
+  num_mv_st: number;
+  mv_st_cost_usd_month: number;
+  by_type: PipelineTypeBreakdown[];
 }
 
 export type PrincipalType = "user" | "service_principal" | "group";
@@ -1063,6 +1141,16 @@ export interface AiFlag {
   issue: string;
   saving_usd_month: number;
 }
+export interface AiCaller {
+  requester: string;
+  requests: number;
+  tokens: number;
+  est_usd_month: number;
+  endpoints: string[];
+  num_endpoints: number;
+  workspaces: string[];
+  is_service_principal: boolean;
+}
 export interface AiCost {
   month: string;
   workspace: string;
@@ -1071,6 +1159,8 @@ export interface AiCost {
   by_user: AiUser[];
   endpoints: AiEndpoint[];
   flags: AiFlag[];
+  callers?: AiCaller[];
+  callers_note?: string;
   total_platform_spend_usd_month?: number;
   trend: { months: string[]; points: number[] };
   summary: {

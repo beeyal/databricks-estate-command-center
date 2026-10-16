@@ -63,14 +63,19 @@ export function CostLenses() {
   const lenses = data?.data;
   if (loading || !lenses) return null;
   const pending = data?.live_pending;
+  const hasGroups = lenses.groups_configured !== false && lenses.by_group && lenses.by_group.length > 0;
+
+  // Determine grid layout based on whether we show the group card
+  const colClass = hasGroups ? "xl:grid-cols-4" : "xl:grid-cols-3";
+
   return (
     <div>
       <div className="flex items-baseline gap-2 mb-2">
         <h3 className="text-sm font-semibold">Cost by operational lens</h3>
-        {pending && <span className="pill bg-warning/15 text-warning uppercase tracking-wide text-[10px]">workload/compute: sample</span>}
-        <InfoTip text="The same monthly estate spend, sliced the way you run the platform rather than by Databricks product: by workload type, Classic vs Serverless compute, Production vs Non-production, and by workspace naming-convention group. Every slice reconciles to the same total." />
+        {pending && <span className="pill bg-warning/15 text-warning uppercase tracking-wide text-[10px]">sample</span>}
+        <InfoTip text={`The same monthly estate spend, sliced the way you run the platform: by workload type, Classic vs Serverless compute, Production vs Non-production${lenses.by_env_tier ? ", and by environment tier" : ""}${hasGroups ? ", and by workspace naming-convention group" : ""}. Every slice reconciles to the same total.${lenses.workload_basis ? ` Workload classification basis: ${lenses.workload_basis}.` : ""}${lenses.window ? ` Window: ${lenses.window}.` : ""}`} />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className={`grid grid-cols-1 md:grid-cols-2 ${colClass} gap-4`}>
         <LensCard
           title="By workload"
           info="Cost grouped into batch / streaming / interactive-ad-hoc / ML-AI, mapped from the billing product + job & cluster metadata. 'Other' is platform services (Apps, Lakebase, Predictive Optimization, monitoring) that aren't a single workload."
@@ -86,11 +91,20 @@ export function CostLenses() {
           info="Production vs Non-production, derived from your workspace naming convention (e.g. -NONPROD / -DEV / SANDBOX ⇒ Non-production). Configurable per your conventions."
           buckets={lenses.by_environment}
         />
-        <LensCard
-          title="By group"
-          info="Cost by naming-convention group — e.g. DATA-EDP- (EDP Core), DATA-ANA- (EDP Edge), FORE- (Forecasting). Configurable to match your exact prefixes."
-          buckets={lenses.by_group}
-        />
+        {lenses.by_env_tier && lenses.by_env_tier.length > 0 && (
+          <LensCard
+            title="By environment tier"
+            info="Cost by environment tier (e.g. Dev, Test, Pre-prod, Prod, Sandbox). Helps platform teams right-size compute per stability needs."
+            buckets={lenses.by_env_tier}
+          />
+        )}
+        {hasGroups && (
+          <LensCard
+            title="By group"
+            info="Cost by naming-convention group — e.g. a prefix per platform team. Configurable to match your exact prefixes."
+            buckets={lenses.by_group}
+          />
+        )}
       </div>
     </div>
   );

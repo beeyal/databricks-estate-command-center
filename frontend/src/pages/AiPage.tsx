@@ -11,7 +11,7 @@ import { Pill } from "../components/shared/Pill";
 import { InfoTip } from "../components/shared/InfoTip";
 import { fmtMoney, fmtNum, fmtPct, byNamedFirst } from "../components/shared/format";
 import { useCurrency } from "../store/appStore";
-import type { AiEndpoint } from "../types";
+import type { AiEndpoint, AiCaller } from "../types";
 
 // AI $ tab — all AI/GenAI billing products (Model Serving, Foundation Model API,
 // Vector Search, Agent Bricks, AI Functions, fine-tuning) by product, endpoint,
@@ -88,6 +88,24 @@ export function AiPage() {
     { key: "usd", header: "$ / mo", align: "right", sortValue: (u) => u.list_usd, render: (u) => <span className="tabular-nums">{fmtMoney(u.list_usd, cur)}</span> },
   ];
 
+  const callerColumns: Column<AiCaller>[] = [
+    { key: "requester", header: "Caller", sortValue: (c) => c.requester, render: (c) => (
+      <span className="font-mono text-xs text-brand-dark truncate max-w-[240px] inline-block flex items-center gap-1.5">
+        {c.requester}
+        {c.is_service_principal && <Pill className="bg-info/15 text-info text-[10px]">service principal</Pill>}
+      </span>
+    ) },
+    { key: "requests", header: "Requests", align: "right", sortValue: (c) => c.requests, render: (c) => <span className="tabular-nums text-neutral">{fmtNum(c.requests)}</span> },
+    { key: "tokens", header: "Tokens", align: "right", sortValue: (c) => c.tokens, render: (c) => <span className="tabular-nums text-neutral">{fmtNum(c.tokens, { compact: true })}</span> },
+    { key: "cost", header: "Est. cost share / mo", align: "right", sortValue: (c) => c.est_usd_month, render: (c) => <span className="tabular-nums">{fmtMoney(c.est_usd_month, cur, { compact: true })}</span> },
+    { key: "endpoints", header: "Top endpoints", sortValue: (c) => c.num_endpoints, render: (c) => (
+      <div className="flex flex-col gap-0.5 text-xs">
+        {c.endpoints.slice(0, 3).map((e) => <span key={e} className="text-neutral truncate">{e}</span>)}
+        {c.endpoints.length > 3 && <span className="text-neutral">+ {c.endpoints.length - 3} more</span>}
+      </div>
+    ) },
+  ];
+
   return (
     <PageShell
       title="AI spend"
@@ -101,6 +119,10 @@ export function AiPage() {
             <MultiDropdown label="Workspace" value={workspace} onChange={setWorkspace} options={wsOptions} allLabel="All workspaces" />
             <SearchBox value={search} onChange={setSearch} placeholder="Filter by endpoint, owner or product…" />
           </FilterBar>
+
+          <div className="text-xs text-neutral flex flex-col gap-1.5">
+            <p>Genie (Spaces and Genie Code) is billed separately — see the Genie $ tab. The Databricks Assistant isn't metered.</p>
+          </div>
 
           <KpiRow cols={ai.flags.length > 0 ? 6 : 5}>
             <KpiCard label="AI $ / mo" value={fmtMoney(ai.summary.total_list_usd_month, cur, { compact: true })} tone="accent"
@@ -178,6 +200,22 @@ export function AiPage() {
             </h3>
             <DataTable columns={userColumns} rows={ai.by_user} rowKey={(u) => u.user} initialSort={{ key: "usd", dir: "desc" }} emptyMessage="No AI owners for this scope." />
           </div>
+
+          {/* Who is calling */}
+          {ai.callers && ai.callers.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-semibold flex items-center gap-1.5">
+                Who is calling
+                <InfoTip text="Callers of AI endpoints ranked by token usage. Cost is an estimate allocated by token share. Comes from system.serving.endpoint_usage; includes shared pay-per-token endpoints that billing attributes to the endpoint owner." />
+              </h3>
+              {ai.callers_note && (
+                <div className="card border-l-4 border-l-info text-xs text-neutral px-3 py-2">
+                  <p>{ai.callers_note}</p>
+                </div>
+              )}
+              <DataTable columns={callerColumns} rows={ai.callers} rowKey={(c) => c.requester} initialSort={{ key: "cost", dir: "desc" }} emptyMessage="No callers data available." />
+            </div>
+          )}
 
           {/* Caveats */}
           <div className="card flex flex-col gap-2 py-3">
