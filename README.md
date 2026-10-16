@@ -43,7 +43,7 @@
 
 <div align="center">
 
-**$642.5K/mo modelled spend** &nbsp;·&nbsp; **$241.6K/mo savings potential (37.6%)** &nbsp;·&nbsp; **12 workspaces, 64 queries, 30 tables, 91 grants, 12 monitored tables** &nbsp;·&nbsp; **24-play operator recommendation catalogue** &nbsp;·&nbsp; **up to 14 pages, 4 deploy-time feature flags, USD/AUD**.
+**$642.5K/mo modelled spend** &nbsp;·&nbsp; **$241.6K/mo savings potential (37.6%)** &nbsp;·&nbsp; **12 workspaces, 64 queries, 30 tables, 91 grants, 12 monitored tables** &nbsp;·&nbsp; **24-play operator recommendation catalogue** &nbsp;·&nbsp; **up to 15 pages, 4 deploy-time feature flags, USD/AUD**.
 
 </div>
 
@@ -55,15 +55,17 @@
 
 - [What is it?](#what-is-it)
 - [Key capabilities — per page](#key-capabilities--per-page)
-  - [Overview](#overview) · [Access](#access) · [Workspaces](#workspaces) · [Query Advisor](#query-advisor) · [Warehouse Monitor](#warehouse-monitor) · [Cluster Efficiency](#cluster-efficiency) · [Tables](#tables) · [Governance](#governance) · [AI $](#ai-) · [Adoption & Value](#adoption--value) · [Data Quality](#data-quality) · [Recommendations](#recommendations)
+  - [Overview](#overview) · [Access](#access) · [Workspaces](#workspaces) · [Jobs](#jobs) · [Pipelines](#pipelines) · [Query Advisor](#query-advisor) · [Warehouse Monitor](#warehouse-monitor) · [Cluster Efficiency](#cluster-efficiency) · [Tables](#tables) · [Governance](#governance) · [AI $](#ai-) · [Adoption & Value](#adoption--value) · [Data Quality](#data-quality) · [Recommendations](#recommendations)
 - [Ask Genie](#ask-genie)
 - [Genie cost attribution](#genie-cost-attribution)
+- [**Environments and platforms — how workspaces are grouped**](#environments-and-platforms--how-workspaces-are-grouped)
 - [**How the numbers are calculated**](#how-the-numbers-are-calculated)
 - [Feature flags & deploy variants](#feature-flags--deploy-variants)
-- [Dual currency & cost-by-driver cost views](#dual-currency--alinta-style-cost-views)
+- [Dual currency & cost-by-driver cost views](#dual-currency--cost-by-driver-cost-views)
 - [Architecture](#architecture)
 - [Tech stack](#tech-stack)
 - [Data requirements](#data-requirements)
+- [Performance — how the app stays fast on a large estate](#performance--how-the-app-stays-fast-on-a-large-estate)
 - [**Deploy it in a customer workspace**](#deploy-it-in-a-customer-workspace) → full step-by-step in the [Customer deployment guide](docs/CUSTOMER_DEPLOYMENT.md)
 - [Local development](#local-development)
 - [Customisation](#customisation)
@@ -98,7 +100,7 @@ A persistent [**Ask Genie**](#ask-genie) banner sits beneath the nav when `featu
 
 ### Overview
 
-The estate dashboard. A KPI row — **Total spend/mo**, **Savings potential** (`$` + `% of spend`), **Total DBUs/mo**, **Top cost driver** (largest `billing_origin_product` by spend), **#Need attention** (critical health) — over a weekly **spend-and-captured-savings** trend chart, then the [cost-by-driver cost views](#dual-currency--alinta-style-cost-views): **cost by cost-driver (product)**, **monthly trend — top-5 drivers**, and a **driver-change-vs-prior-30-days (%)** bar for **MoM spike detection** (drivers up ≥ 25% MoM fire a cost-spike recommendation). A **Top savings opportunities** rollup ranks the highest-impact recs cross-page (worst queries, worst external tables, most over-privileged principals) and deep-links into the Recommendations hub. This is the *only* page besides Recommendations that carries advice, and only as a teaser. A **USD/AUD** toggle in the header restates every `$` figure.
+The estate dashboard. A KPI row — **Total spend/mo**, **Savings potential** (`$` + `% of spend`), **Total DBUs/mo**, **Top cost driver** (largest `billing_origin_product` by spend), **#Need attention** (critical health) — over a weekly **spend-and-captured-savings** trend chart, then the [cost-by-driver cost views](#dual-currency--cost-by-driver-cost-views): **cost by cost-driver (product)**, **monthly trend — top-5 drivers**, and a **driver-change-vs-prior-30-days (%)** bar for **MoM spike detection** (drivers up ≥ 25% MoM fire a cost-spike recommendation). A **Top savings opportunities** rollup ranks the highest-impact recs cross-page (worst queries, worst external tables, most over-privileged principals) and deep-links into the Recommendations hub. This is the *only* page besides Recommendations that carries advice, and only as a teaser. A **USD/AUD** toggle in the header restates every `$` figure.
 
 **Cost by operational lens** re-expresses the same trailing-30-day spend the way a platform team runs it: **by workload** (batch / streaming / interactive / ML-AI — jobs split by job-name rules, pipelines by continuous vs triggered mode), **Classic vs Serverless**, **Production vs Non-production**, **by environment tier** (Dev / Test / Pre-prod / Prod, from the workspace name) and **by naming-convention group** (only when `FINOPS_WORKSPACE_GROUPS` is set). In live mode every lens comes from one billing read, so they all reconcile to the same total. Set `FINOPS_EFFECTIVE_DISCOUNT` to also show effective (post-discount) cost next to list.
 
@@ -267,6 +269,60 @@ The surface enum is **open** — the app labels whatever values appear rather th
 - Consumption-based pricing began **6 Jul 2026**, so figures **read light until usage flows**.
 
 ![Genie spend in the Workspaces drill-down](docs/screenshots/16-workspaces-drilldown-genie.png)
+
+---
+
+## Environments and platforms — how workspaces are grouped
+
+Jobs, Workspaces, Pipelines and the Overview cost lenses can show the estate by **environment** (Dev / Test / Pre-prod / Sandbox / Non-prod / Prod) and by **platform** (the product or system a workspace belongs to), with a **platform × environment grid** on Jobs, Workspaces and Pipelines: pick a platform and see its Dev, Test, Pre-prod and Prod side by side. Rows can be switched to **business unit** when a BU mapping table is configured.
+
+**Business unit, platform and environment are different things.** A business unit is who owns and pays for a workspace (from your mapping table). A platform is what it runs — one business unit often owns several platforms. The environment is the stage. The grid crosses either rows choice with environment.
+
+### Where each value comes from (first match wins)
+
+| | 1. Mapping table | 2. Naming rules (`app.yaml`) | 3. Workspace name (automatic) |
+|---|---|---|---|
+| **Environment** | `environment` column of `FINOPS_WORKSPACE_BU_TABLE` | `FINOPS_ENV_TIERS` (and `FINOPS_ENV_NONPROD_PATTERN`) | The environment word in the name |
+| **Platform** | `platform` column of `FINOPS_WORKSPACE_BU_TABLE` | `FINOPS_WORKSPACE_GROUPS` prefix rules, or `FINOPS_PLATFORM_PATTERN` | The name with its environment word removed |
+| **Business unit** | `bu` column | — | — |
+
+The mapping table is optional and is the fix for workspaces whose names don't follow your convention — fill in only those rows ([`reference/mapping_tables_setup.sql`](reference/mapping_tables_setup.sql)). Mapping-table values apply within ~10 minutes; no redeploy or nightly run needed.
+
+### How a workspace name is read
+
+The name is split into words on any separator (`-`, `_`, `.`, space, brackets), on case changes (`ForecastingDev` → Forecasting + Dev) and on digit boundaries (`dev01` → dev + 01). The first word that matches an environment tier sets the environment — so the word can be a **prefix, suffix or anywhere in the middle**:
+
+| Workspace name | Environment | Platform |
+|---|---|---|
+| `dev-forecasting`, `forecasting-dev`, `Forecasting Dev` | Dev | forecasting / Forecasting |
+| `forecasting_DEV_01`, `DEVforecasting`, `ForecastingDev` | Dev | forecasting / Forecasting |
+| `net-tst`, `tst_net`, `net uat`, `QA_Billing` | Test | net / Billing |
+| `pre-prod-net`, `net-preprod`, `DATA-EDP-PPD`, `stg-data` | Pre-prod | net / DATA-EDP / data |
+| `DATA-EDP-PRD`, `NET.PRD`, `Net (Prod)`, `prod2_net` | Prod | DATA-EDP / NET / Net / net |
+| `DATA-ANA-SCADA-NONPROD`, `data_non_prod` | Non-prod | DATA-ANA-SCADA / data |
+| `sbx-labs`, `poc-genai` | Sandbox | labs / genai |
+| `product-analytics`, `device-telemetry`, `contest-app` | *Unclassified* | (unchanged) |
+
+Built-in environment words (override with `FINOPS_ENV_TIERS`, e.g. `"Dev:dev;Test:tst|uat;Pre-prod:ppd;Prod:prd"`):
+
+- **Dev:** dev, develop, development, dv
+- **Test:** tst, test, testing, qa, uat, sit
+- **Pre-prod:** ppd, preprod (also `pre-prod`), stg, stage, staging, perf
+- **Sandbox:** sbx, sandbox, lab, poc, playground
+- **Non-prod:** nonprod (also `non-prod`, `non_prod`), nonprd, npd
+- **Prod:** prd, prod, production, live
+
+Dev, Test, Pre-prod, Sandbox and Non-prod count as **Non-production**. A name with no environment word is **Unclassified** and treated as Production (the conservative default — nothing is called non-prod by guesswork).
+
+**What it deliberately doesn't do:** match an environment word inside a longer word (`product` isn't prod, `device` isn't dev), or split an all-capitals word with no separator (`NETPROD`). A number next to the environment word is treated as an instance number and dropped from the platform (`dev01-net` → net), which also means `edp-01-prd` and `edp-02-prd` share the platform `edp` — use the mapping table if they're different systems.
+
+### Platform rules vs automatic
+
+With no rules, the platform is the name minus its environment word — fine-grained (`DATA-EDP-PLATFORM`, `DATA-EDP-GAS`). To group more coarsely, set prefix rules, e.g. `FINOPS_WORKSPACE_GROUPS: "DATA-EDP-:EDP Core;DATA-ANA-:EDP Edge;FORE-:Forecasting"` — every `DATA-EDP-*` workspace is then platform **EDP Core**, across all its environments. For conventions neither handles, `FINOPS_PLATFORM_PATTERN` takes a regex with a `(?P<platform>…)` group.
+
+### Honesty about coverage
+
+Under the grid the app states where the environment came from by share of cost (mapping table / name / not recognised), so it's clear how much rests on naming. If no workspace name carries an environment word — or no platform spans more than one environment — the grid is replaced by a short note explaining how to supply the mapping instead of drawing an empty or misleading grid.
 
 ---
 

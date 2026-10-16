@@ -1150,7 +1150,10 @@ def _annotate_ws_grouping(rows: list[dict[str, Any]]) -> None:
     mapping = _ws_mapping()
     for r in rows:
         name = r.get("workspace") or r.get("workspace_name") or ""
-        r.update(grouping.classify(name, mapping.get(str(r.get("workspace_id") or ""))))
+        m = mapping.get(str(r.get("workspace_id") or ""))
+        r.update(grouping.classify(name, m))
+        if m and m.get("bu"):
+            r["bu"] = m["bu"]   # mapping applied at request time (not only at gold build)
 
 
 @app.get("/api/workspaces")

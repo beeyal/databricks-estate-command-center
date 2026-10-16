@@ -41,22 +41,23 @@ flowchart LR
     GOLD[(Gold Delta tables<br/>finops_gold · nightly precompute)]
   end
 
-  subgraph UI["4 · REACT 18 SPA — UP TO 14 PAGES"]
+  subgraph UI["4 · REACT 18 SPA — UP TO 15 PAGES"]
     direction TB
     P1[Overview]
     P2[Access]
     P3[Workspaces]
     P4[Jobs]
-    P5[Query Advisor]
-    P6[Warehouses]
-    P7[Clusters]
-    P8[Tables]
-    P9[Governance]
-    P10[Adoption & Value]
-    P11["Genie $"]
-    P12["AI $"]
-    P13["Data Quality — if dqm"]
-    P14[Recommendations]
+    P5[Pipelines]
+    P6[Query Advisor]
+    P7[Warehouses]
+    P8[Clusters]
+    P9[Tables]
+    P10[Governance]
+    P11[Adoption & Value]
+    P12["Genie $"]
+    P13["AI $"]
+    P14["Data Quality — if dqm"]
+    P15[Recommendations]
     BAN["Ask Genie banner — if genie"]
   end
 
@@ -130,7 +131,7 @@ The **Access** principal directory, group membership, workspace assignments and 
 - **EXPLAIN-validated query rewrites** (`data/rewrite.py`, `POST /api/queries/rewrite`). A second, on-demand use of the same in-region `FINOPS_LLM_ENDPOINT`: for a `rewrite`-type Query Advisor insight the operator can ask for a concrete rewritten `SELECT`. The model proposes it; the app then runs `EXPLAIN` against the customer's own warehouse and **only surfaces a rewrite that binds to the real schema** — a hallucinated column fails EXPLAIN and is rejected, never shown as runnable. A read-only guard (single `SELECT`/`WITH`, comment-stripped, no statement stacking) runs before anything reaches the warehouse, and EXPLAIN never executes the query. Honest by contract: EXPLAIN proves the rewrite *runs and binds*, not that results are identical — the UI says so. In demo mode a deterministic illustrative rewrite is shown instead (projecting the query's own predicate columns; never inventing names). Unlike narration this proposes *runnable SQL*, not prose, and needs a warehouse (for EXPLAIN) in live mode.
 - **Static-after-API route order.** The SPA fallback route is registered *after* all `/api/*` routes and explicitly 404s `api/*` misses, so client-side routing works without shadowing the API.
 
-### 4 · React SPA (up to 14 pages)
+### 4 · React SPA (up to 15 pages)
 
 - **Shared component kit** (`components/shared`, `components/kpi`): `DataTable` (sortable), `FilterBar`, `Pill`, `KpiCard`/`KpiRow`, `Sparkline`, `ProgressBar`, `SpendSavingsChart`, plus the cost-by-driver cost-driver / spike-detection charts. Every page is a KPI row → filter bar → main table/detail, so the pages feel like one product.
 - **Advice lives in one place.** Only Overview (a ranked teaser that deep-links out) and Recommendations (the full hub) carry advice. Access is deliberately AI-free — a factual grants explorer. Query Advisor is observability that *feeds* the hub. Data Quality is a monitoring inventory with a cost tie-in, not an advisor. This keeps the mental model clean: one advisor surface, everything else is evidence.

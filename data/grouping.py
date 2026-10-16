@@ -111,6 +111,48 @@ def _nonprod_re() -> re.Pattern[str] | None:
 
 
 _TOKEN_SPLIT = re.compile(r"[^A-Za-z0-9]+")
+# Inside each separator-delimited piece, also split on case changes and digit
+# boundaries, so "ForecastingDev", "devForecasting", "DEV01" and "prod2" yield
+# their environment word. Environment words are NOT matched as substrings of a
+# longer word ("product" ≠ prod, "device" ≠ dev, "contest" ≠ test).
+_SUBTOKEN = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+
+
+_UPPER_PREFIX = re.compile(r"^([A-Z]{2,})([a-z].*)$")
+
+
+_PIECE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _token_spans(name: str) -> list[tuple[str, int, int]]:
+    """(token, start, end) over the original string — separators, case changes
+    and digit boundaries all split; spans let the platform be rebuilt from the
+    ORIGINAL text (keeping its separators and casing)."""
+    out: list[tuple[str, int, int]] = []
+    for pm in _PIECE.finditer(name or ""):
+        piece, base = pm.group(0), pm.start()
+        # "DEVforecasting": an upper-case environment word glued to a lower-case
+        # word (the generic camel-case rule can't tell that from an acronym).
+        um = _UPPER_PREFIX.match(piece)
+        if um and um.group(1).lower() in _all_env_tokens():
+            out.append((um.group(1), base, base + len(um.group(1))))
+            base += len(um.group(1))
+            piece = um.group(2)
+        subs = list(_SUBTOKEN.finditer(piece))
+        if not subs:
+            out.append((piece, base, base + len(piece)))
+        for sm in subs:
+            out.append((sm.group(0), base + sm.start(), base + sm.end()))
+    return out
+
+
+def _tokens(name: str) -> list[str]:
+    return [t for t, _a, _b in _token_spans(name)]
+
+
+def _all_env_tokens() -> set[str]:
+    rules = _tier_rules()
+    return set().union(*(toks for _t, toks in rules)) if rules else set()
 
 
 def groups_configured() -> bool:
@@ -130,7 +172,7 @@ def workspace_group(name: str) -> str:
 @lru_cache(maxsize=4096)
 def workspace_tier(name: str) -> str:
     """DEV / TEST / PRE-PROD / … tier from the name's tokens (first rule wins)."""
-    tokens = [t.lower() for t in _TOKEN_SPLIT.split(name or "") if t]
+    tokens = [t.lower() for t in _tokens(name)]
     # Also try adjacent pairs joined, so "PRE-PROD" / "NON_PROD" read as
     # "preprod" / "nonprod" — and are checked BEFORE the single tokens, so the
     # "prod" half of "PRE-PROD" can't classify it as Prod.
@@ -187,10 +229,11 @@ def workspace_platform(name: str) -> str:
         m = rx.search(raw)
         if m and m.group("platform"):
             return m.group("platform")
-    tokens = [t for t in _TOKEN_SPLIT.split(raw) if t]
+    spans = _token_spans(raw)
+    tokens = [t for t, _a, _b in spans]
     if not tokens:
         return raw
-    env_tokens = set().union(*(toks for _tier, toks in _tier_rules())) if _tier_rules() else set()
+    env_tokens = _all_env_tokens()
     keep = [True] * len(tokens)
     low = [t.lower() for t in tokens]
     for i in range(len(tokens) - 1):           # "PRE-PROD", "NON_PROD" pairs
@@ -199,10 +242,34 @@ def workspace_platform(name: str) -> str:
     for i, t in enumerate(low):
         if t in env_tokens:
             keep[i] = False
-    rest = [t for t, k in zip(tokens, keep) if k]
-    if not rest or len(rest) == len(tokens):
+    # A number right next to the environment word is an instance number
+    # ("dev01", "DEV_01", "prod2"), not part of the platform name.
+    for i, t in enumerate(low):
+        if t.isdigit() and ((i > 0 and not keep[i - 1] and low[i - 1] in env_tokens)
+                            or (i + 1 < len(low) and not keep[i + 1] and low[i + 1] in env_tokens)):
+            keep[i] = False
+    if all(keep) or not any(keep):
         return raw                              # nothing (or only an env word) to strip
-    return "-".join(rest)
+    # Cut the dropped spans out of the ORIGINAL string, then tidy the separators
+    # left behind, so "PDFReader-prod" → "PDFReader" and "net_prod_v2" → "net_v2".
+    out, pos = [], 0
+    for (_t, a, b), k in zip(spans, keep):
+        if not k:
+            out.append(raw[pos:a])
+            out.append("\0")                      # marker where a span was removed
+            pos = b
+    out.append(raw[pos:])
+    txt = "".join(out)
+    txt = re.sub(r"[\s_.\-]*\0[\s_.\-]*", lambda m: _join_sep(m.group(0)), txt)
+    txt = re.sub(r"\(\s*\)", "", txt)            # "Net (Prod)" → "Net"
+    return txt.strip(" -_.") or raw
+
+
+def _join_sep(chunk: str) -> str:
+    """Separator to leave where an environment word was removed: the first real
+    separator around it (so "a-dev-b" → "a-b", "a_dev_b" → "a_b"), or nothing."""
+    seps = [c for c in chunk if c in "-_. "]
+    return seps[0] if seps else ""
 
 
 def classify(name: str, mapping: dict[str, str] | None = None) -> dict[str, str]:
@@ -251,3 +318,33 @@ def reset_cache() -> None:
     _platform_re.cache_clear()
     workspace_tier.cache_clear()
     workspace_platform.cache_clear()
+
+
+if __name__ == "__main__":
+    # Self-check: environment / platform from the common workspace naming styles
+    # (prefix, suffix, middle, camel-case, glued, instance numbers, false friends).
+    reset_cache()
+    cases = [
+        ("dev-forecasting", "Dev", "forecasting"), ("forecasting-dev", "Dev", "forecasting"),
+        ("Forecasting Dev", "Dev", "Forecasting"), ("forecasting_DEV_01", "Dev", "forecasting"),
+        ("DEVforecasting", "Dev", "forecasting"), ("ForecastingDev", "Dev", "Forecasting"),
+        ("dev01-net", "Dev", "net"), ("prod2_net", "Prod", "net"), ("net_prod_v2", "Prod", "net_v2"),
+        ("net-tst", "Test", "net"), ("tst_net", "Test", "net"), ("NET.PRD", "Prod", "NET"),
+        ("net uat", "Test", "net"), ("QA_Billing", "Test", "Billing"), ("Net (Prod)", "Prod", "Net"),
+        ("pre-prod-net", "Pre-prod", "net"), ("net-preprod", "Pre-prod", "net"),
+        ("DATA-EDP-TST", "Test", "DATA-EDP"), ("DATA-EDP-PPD", "Pre-prod", "DATA-EDP"),
+        ("DATA-ANA-SCADA-NONPROD", "Non-prod", "DATA-ANA-SCADA"), ("sbx-labs", "Sandbox", "labs"),
+        ("product-analytics", UNCLASSIFIED, "product-analytics"),
+        ("device-telemetry", UNCLASSIFIED, "device-telemetry"), ("contest-app", UNCLASSIFIED, "contest-app"),
+        ("prod", "Prod", "prod"),
+    ]
+    bad = 0
+    for name, tier, plat in cases:
+        got = (workspace_tier(name), workspace_platform(name))
+        if got != (tier, plat):
+            bad += 1
+            print(f"FAIL {name!r}: got {got}, want {(tier, plat)}")
+    m = classify("anything", {"platform": "Lab", "environment": "sandbox"})
+    assert (m["platform"], m["env_tier"], m["environment"], m["env_source"]) == ("Lab", "Sandbox", NONPROD, "mapping"), m
+    print(f"{len(cases) - bad}/{len(cases)} naming cases OK")
+    raise SystemExit(1 if bad else 0)
