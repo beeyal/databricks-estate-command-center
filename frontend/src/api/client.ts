@@ -45,6 +45,7 @@ import type {
   TablesSummary,
   Workspace,
   WorkspaceDetail,
+  OverviewLenses,
 } from "../types";
 
 const API_BASE = "/api";
@@ -172,6 +173,11 @@ export function fetchWorkspaces(
   params: Record<string, string> = {},
 ): Promise<Envelope<Workspace[]>> {
   return getEnvelope<Workspace[]>(`/workspaces${qs(params)}`);
+}
+
+// Operational cost lenses for the Overview (workload / compute-type / environment / group).
+export function fetchOverviewLenses(): Promise<Envelope<OverviewLenses>> {
+  return getEnvelope<OverviewLenses>(`/overview/lenses`);
 }
 
 // Lightweight {workspace, workspace_id} list for filter dropdowns — avoids

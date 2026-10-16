@@ -219,6 +219,25 @@ export interface Workspace {
   anomaly_pct?: number;         // signed latest-vs-baseline deviation (0.38 = +38%)
   anomaly_severity?: "warning" | "critical" | "";
   anomaly_note?: string;        // plain-English explanation for the tooltip
+  // Naming-convention group (#2a) + Production/Non-production environment (#2b),
+  // annotated by the backend from the workspace name via data/grouping.py.
+  group?: string;
+  environment?: string;
+}
+
+// Operational cost lenses (Chris feedback #2a/#2b/#2c/#2e). Each bucket is one
+// slice; pct is the share of that lens's total. All lenses reconcile to the
+// estate spend total.
+export interface LensBucket {
+  key: string;
+  spend_usd_month: number;
+  pct: number;
+}
+export interface OverviewLenses {
+  by_workload: LensBucket[];
+  by_compute_type: LensBucket[];
+  by_environment: LensBucket[];
+  by_group: LensBucket[];
 }
 
 export interface ProductMixSlice {

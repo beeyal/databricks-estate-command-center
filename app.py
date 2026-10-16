@@ -1110,11 +1110,25 @@ def _annotate_ws_anomalies(rows: list[dict[str, Any]]) -> None:
             )
 
 
+def _annotate_ws_grouping(rows: list[dict[str, Any]]) -> None:
+    """Annotate each workspace with its naming-convention group + environment
+    (customer feedback #2a / #2b). Config-driven via data/grouping.py; mutates in
+    place adding ``group`` (e.g. "EDP Core") and ``environment`` (Production /
+    Non-production)."""
+    from data import grouping
+    for r in rows:
+        name = r.get("workspace") or r.get("workspace_name") or ""
+        r["group"] = grouping.workspace_group(name)
+        r["environment"] = grouping.workspace_environment(name)
+
+
 @app.get("/api/workspaces")
 def get_workspaces(
     complexity: str = Query("all"),
     health: str = Query("all"),
     search: str = Query(""),
+    group: str = Query("all"),
+    environment: str = Query("all"),
 ) -> dict[str, Any]:
     if USE_LIVE:
         from data import live
@@ -1123,10 +1137,16 @@ def get_workspaces(
     else:
         rows = demo.get_workspaces()
         live_source = False
-    # Annotate abnormal cost-movement flags before filtering so the exception
-    # signal is present regardless of the complexity/health/search narrowing.
+    # Annotate abnormal cost-movement flags + naming-convention group/environment
+    # before filtering so those signals are present regardless of narrowing.
     _annotate_ws_anomalies(rows)
+    _annotate_ws_grouping(rows)
     cx = _multi(complexity); hl = _multi(health)
+    grp = _multi(group); env = _multi(environment)
+    if grp:
+        rows = [r for r in rows if r.get("group") in grp]
+    if env:
+        rows = [r for r in rows if r.get("environment") in env]
     if cx:
         rows = [r for r in rows if r["complexity"] in cx]
     if hl:
@@ -2302,6 +2322,49 @@ def get_governance(status: str = Query("all")) -> dict[str, Any]:
     if gov_cached_at:
         wrapped["cached_at"] = gov_cached_at
     return wrapped
+
+
+# ---------------------------------------------------------------------------
+# API — operational cost lenses (Chris feedback #2a/#2b/#2c/#2e)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/overview/lenses")
+def get_overview_lenses() -> dict[str, Any]:
+    """Cost re-expressed the way AEMO operates: by workload type, Classic vs
+    Serverless, by Production/Non-production environment, and by naming-convention
+    group. In live mode the environment + group lenses are computed from the real
+    workspace rows (annotated by naming convention); the workload + compute-type
+    lenses fall back to the sample split flagged live_pending until wired to the
+    live cost-driver SKUs."""
+    if USE_LIVE:
+        try:
+            from data import live, grouping, workload as wl
+            rows, _ls, _c = _cached_rows_or_live("workspaces", lambda: live.workspaces_live(WAREHOUSE_ID))
+            env_spend: dict[str, float] = {}
+            grp_spend: dict[str, float] = {}
+            for r in rows:
+                name = r.get("workspace") or r.get("workspace_name") or ""
+                s = float(r.get("spend_usd_month") or 0)
+                env_spend[grouping.workspace_environment(name)] = env_spend.get(grouping.workspace_environment(name), 0.0) + s
+                grp_spend[grouping.workspace_group(name)] = grp_spend.get(grouping.workspace_group(name), 0.0) + s
+            ws_total = sum(env_spend.values()) or 1.0
+            # Workload + compute-type still come from the sample split (not yet wired
+            # to live SKU rows) — mark the whole payload live_pending so the UI is honest.
+            sample = demo.get_overview_lenses()
+            payload = {
+                "by_workload": sample["by_workload"],
+                "by_compute_type": sample["by_compute_type"],
+                "by_environment": sorted(
+                    [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in env_spend.items()],
+                    key=lambda x: -x["spend_usd_month"]),
+                "by_group": sorted(
+                    [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in grp_spend.items()],
+                    key=lambda x: -x["spend_usd_month"]),
+            }
+            return _wrap(payload, live_source=False)  # workload/compute not yet live → pending
+        except Exception:  # noqa: BLE001
+            return _wrap(demo.get_overview_lenses(), live_source=False)
+    return _wrap(demo.get_overview_lenses(), live_source=False)
 
 
 # ---------------------------------------------------------------------------

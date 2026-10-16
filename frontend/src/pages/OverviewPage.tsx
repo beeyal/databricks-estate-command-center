@@ -7,6 +7,7 @@ import { KpiRow } from "../components/kpi/KpiRow";
 import { SpendSavingsChart } from "../components/charts/SpendSavingsChart";
 import { DriverBar, DriverTrendChart, MoMChangeBar } from "../components/charts/CostDriverCharts";
 import { ExecutiveSummary } from "../components/overview/ExecutiveSummary";
+import { CostLenses } from "../components/overview/CostLenses";
 import { PageShell, LoadingCard, ErrorCard } from "../components/layout/PageShell";
 import { FilterBar, MultiDropdown } from "../components/shared/FilterBar";
 import { InfoTip } from "../components/shared/InfoTip";
@@ -113,6 +114,10 @@ export function OverviewPage() {
 
           {/* Driver change vs prior 30 days (%) — spike detection — SPEC §9 */}
           <MoMChangeBar mom={data.data.cost_drivers?.mom ?? []} />
+
+          {/* Operational cost lenses — workload / compute-type / environment / group
+              (Chris feedback #2a/#2b/#2c/#2e) */}
+          <CostLenses />
 
           <div className="card">
             <div className="flex items-baseline justify-between mb-3">

@@ -34,18 +34,18 @@ def _stable_hash(s: str) -> int:
 # enterprise footprint: platform/shared, per-BU, and a couple of sandbox/dev.
 _WORKSPACES = [
     # (name, bu, base_spend_usd_month, automated_pct, complexity)
-    ("acme-platform-prod", "Platform Engineering", 148_000, 0.71, "Complex"),
-    ("acme-gas-transmission", "Gas Transmission", 96_500, 0.63, "Complex"),
-    ("acme-energy-markets", "Energy Markets & Trading", 82_300, 0.44, "Complex"),
-    ("acme-asset-analytics", "Asset & Network Analytics", 61_200, 0.58, "Moderate"),
-    ("acme-metering-nem12", "Metering & NEM12", 54_800, 0.39, "Moderate"),
-    ("acme-scada-ot", "SCADA / OT Integration", 43_100, 0.52, "Moderate"),
-    ("acme-finance-fpna", "Finance & FP&A", 28_700, 0.66, "Simple"),
-    ("acme-customer-billing", "Customer & Billing", 37_900, 0.31, "Moderate"),
-    ("acme-sustainability", "Sustainability & ESG", 19_400, 0.48, "Simple"),
-    ("acme-datascience-sandbox", "Data Science", 24_600, 0.18, "Complex"),
-    ("acme-shared-bi", "Shared BI / AI-BI", 33_200, 0.61, "Moderate"),
-    ("acme-dev-scratch", "Platform Engineering", 12_800, 0.12, "Simple"),
+    ("DATA-EDP-PLATFORM-PROD", "Platform Engineering", 148_000, 0.71, "Complex"),
+    ("DATA-EDP-GAS-PROD", "Gas Transmission", 96_500, 0.63, "Complex"),
+    ("DATA-EDP-MARKETS-PROD", "Energy Markets & Trading", 82_300, 0.44, "Complex"),
+    ("DATA-ANA-ASSET-PROD", "Asset & Network Analytics", 61_200, 0.58, "Moderate"),
+    ("DATA-EDP-METERING-PROD", "Metering & NEM12", 54_800, 0.39, "Moderate"),
+    ("DATA-ANA-SCADA-NONPROD", "SCADA / OT Integration", 43_100, 0.52, "Moderate"),
+    ("DATA-ANA-FINANCE-PROD", "Finance & FP&A", 28_700, 0.66, "Simple"),
+    ("DATA-EDP-BILLING-PROD", "Customer & Billing", 37_900, 0.31, "Moderate"),
+    ("DATA-ANA-ESG-NONPROD", "Sustainability & ESG", 19_400, 0.48, "Simple"),
+    ("FORE-DATASCIENCE-DEV", "Data Science", 24_600, 0.18, "Complex"),
+    ("DATA-ANA-BI-PROD", "Shared BI / AI-BI", 33_200, 0.61, "Moderate"),
+    ("DATA-EDP-PLATFORM-DEV", "Platform Engineering", 12_800, 0.12, "Simple"),
 ]
 
 _PRODUCTS = [
@@ -141,8 +141,8 @@ def _round(x: float, n: int = 0) -> float:
 # Latest-week spike multipliers for the demo abnormal-cost-movement flags
 # (feedback #4). One clear critical spike + one warning-level move.
 _WS_LASTWEEK_SPIKE: dict[str, float] = {
-    "acme-datascience-sandbox": 1.9,   # ← sharp spike → critical exception
-    "acme-energy-markets": 1.33,       # ← moderate deviation → warning
+    "FORE-DATASCIENCE-DEV": 1.9,   # ← sharp spike → critical exception
+    "DATA-EDP-MARKETS-PROD": 1.33,       # ← moderate deviation → warning
 }
 
 
@@ -511,6 +511,67 @@ def _estate_driver_spend() -> dict[str, float]:
         for drv, v in dspend.items():
             out[drv] = out.get(drv, 0.0) + v
     return out
+
+
+@lru_cache(maxsize=1)
+def _overview_lenses() -> dict[str, Any]:
+    """AEMO's operational cost lenses (Chris feedback #2a/#2b/#2c/#2e), all
+    reconciling to the same estate total:
+
+      * by_workload      — batch / streaming / interactive / ML-AI / other, from
+                           the cost-driver → workload map (data/workload.py).
+      * by_compute_type  — Classic vs Serverless, split from the SKU names
+                           (SERVERLESS_* SKUs vs the rest).
+      * by_environment   — Production vs Non-production, summed over workspaces.
+      * by_group         — EDP Core / EDP Edge / Forecasting …, summed over
+                           workspaces (naming-convention groups).
+    """
+    from data import workload as wl
+    from data import grouping
+
+    driver_spend = _estate_driver_spend()
+    total = sum(driver_spend.values()) or 1.0
+
+    wl_spend: dict[str, float] = {}
+    comp: dict[str, float] = {"Serverless": 0.0, "Classic": 0.0}
+    for code, spend in driver_spend.items():
+        label = _DRIVER_INDEX.get(code, {}).get("label", code)
+        bucket = wl.classify_product(label)
+        wl_spend[bucket] = wl_spend.get(bucket, 0.0) + spend
+        for sku, share in _DRIVER_SKUS.get(code, [(code, 1.0)]):
+            key = "Serverless" if "SERVERLESS" in sku.upper() else "Classic"
+            comp[key] += spend * share
+    comp_total = sum(comp.values()) or 1.0
+
+    env_spend: dict[str, float] = {}
+    grp_spend: dict[str, float] = {}
+    for w in _workspace_records():
+        name = w["workspace"]
+        env_spend[grouping.workspace_environment(name)] = (
+            env_spend.get(grouping.workspace_environment(name), 0.0) + w["spend_usd_month"])
+        grp_spend[grouping.workspace_group(name)] = (
+            grp_spend.get(grouping.workspace_group(name), 0.0) + w["spend_usd_month"])
+    ws_total = sum(env_spend.values()) or 1.0
+
+    return {
+        "by_workload": sorted(
+            [{"key": k, "spend_usd_month": round(v), "pct": round(v / total, 3)} for k, v in wl_spend.items()],
+            key=lambda x: -x["spend_usd_month"]),
+        "by_compute_type": sorted(
+            [{"key": k, "spend_usd_month": round(v), "pct": round(v / comp_total, 3)} for k, v in comp.items()],
+            key=lambda x: -x["spend_usd_month"]),
+        "by_environment": sorted(
+            [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in env_spend.items()],
+            key=lambda x: -x["spend_usd_month"]),
+        "by_group": sorted(
+            [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in grp_spend.items()],
+            key=lambda x: -x["spend_usd_month"]),
+    }
+
+
+def get_overview_lenses() -> dict[str, Any]:
+    """Public demo entry point for the operational cost lenses."""
+    return _overview_lenses()
 
 
 @lru_cache(maxsize=1)
@@ -1073,15 +1134,15 @@ _GROUP_ENTITLEMENTS: dict[str, list[str]] = {
 }
 
 _GROUP_WORKSPACES: dict[str, list[tuple[str, str]]] = {
-    "data-platform-admins": [("acme-platform-prod", "ADMIN"), ("acme-gas-transmission", "ADMIN"), ("acme-energy-markets", "ADMIN")],
-    "gas-transmission-analysts": [("acme-gas-transmission", "USER"), ("acme-asset-analytics", "USER")],
-    "energy-markets-traders": [("acme-energy-markets", "USER"), ("acme-shared-bi", "USER")],
-    "metering-engineers": [("acme-metering-nem12", "USER"), ("acme-customer-billing", "USER")],
-    "finance-fpna": [("acme-finance-fpna", "USER"), ("acme-shared-bi", "USER")],
-    "data-science-team": [("acme-datascience-sandbox", "USER")],
-    "bi-consumers": [("acme-shared-bi", "USER")],
-    "scada-ot-readers": [("acme-scada-ot", "USER")],
-    "billing-etl-svc": [("acme-customer-billing", "USER")],
+    "data-platform-admins": [("DATA-EDP-PLATFORM-PROD", "ADMIN"), ("DATA-EDP-GAS-PROD", "ADMIN"), ("DATA-EDP-MARKETS-PROD", "ADMIN")],
+    "gas-transmission-analysts": [("DATA-EDP-GAS-PROD", "USER"), ("DATA-ANA-ASSET-PROD", "USER")],
+    "energy-markets-traders": [("DATA-EDP-MARKETS-PROD", "USER"), ("DATA-ANA-BI-PROD", "USER")],
+    "metering-engineers": [("DATA-EDP-METERING-PROD", "USER"), ("DATA-EDP-BILLING-PROD", "USER")],
+    "finance-fpna": [("DATA-ANA-FINANCE-PROD", "USER"), ("DATA-ANA-BI-PROD", "USER")],
+    "data-science-team": [("FORE-DATASCIENCE-DEV", "USER")],
+    "bi-consumers": [("DATA-ANA-BI-PROD", "USER")],
+    "scada-ot-readers": [("DATA-ANA-SCADA-NONPROD", "USER")],
+    "billing-etl-svc": [("DATA-EDP-BILLING-PROD", "USER")],
     "account users": [],
 }
 

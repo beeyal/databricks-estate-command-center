@@ -33,14 +33,18 @@ export function WorkspacesPage() {
   const [customer, setCustomer] = useState<string[]>([]);
   const [complexity, setComplexity] = useState<string[]>([]);
   const [health, setHealth] = useState<string[]>([]);
+  const [grp, setGrp] = useState<string[]>([]);
+  const [env, setEnv] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const { data, loading, error } = useApi(
     () => fetchWorkspaces({
       complexity: complexity.length ? complexity.join(",") : "all",
       health: health.length ? health.join(",") : "all",
+      group: grp.length ? grp.join(",") : "all",
+      environment: env.length ? env.join(",") : "all",
       search,
     }),
-    [complexity.join(","), health.join(","), search],
+    [complexity.join(","), health.join(","), grp.join(","), env.join(","), search],
   );
 
   // BU/Customer options come from a SEPARATE unfiltered fetch (matching Jobs/
@@ -51,6 +55,15 @@ export function WorkspacesPage() {
     const set = Array.from(new Set((allWs?.data ?? []).map((r) => r.bu).filter(Boolean)))
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
     return set.map((b) => ({ value: b, label: b }));
+  }, [allWs]);
+  // Naming-convention group + environment options (#2a/#2b), from the unfiltered set.
+  const groupOptions = useMemo(() => {
+    const set = Array.from(new Set((allWs?.data ?? []).map((r) => r.group).filter(Boolean) as string[])).sort();
+    return set.map((g) => ({ value: g, label: g }));
+  }, [allWs]);
+  const envOptions = useMemo(() => {
+    const set = Array.from(new Set((allWs?.data ?? []).map((r) => r.environment).filter(Boolean) as string[])).sort();
+    return set.map((e) => ({ value: e, label: e }));
   }, [allWs]);
 
   const allRows = data?.data ?? [];
@@ -90,7 +103,13 @@ export function WorkspacesPage() {
     { key: "savings", header: (<span className="inline-flex items-center gap-1">Savings/mo<InfoTip text="ESTIMATED optimisation headroom, not a measured or realised saving = this workspace's spend × the Savings % heuristic. Validate specific plays on the Recommendations tab before banking any number." /></span>), align: "right", sortValue: (r) => r.savings_usd_month, render: (r) => <span className="tabular-nums text-success">{fmtMoney(r.savings_usd_month, cur, { compact: true })}</span> },
     { key: "savings_pct", header: (<span className="inline-flex items-center gap-1">Savings %<InfoTip text="MODELED headroom estimate (not a measured or realised saving): a heuristic driven by how much of the workspace is un-automated and non-serverless (plus idle share where available) — low automation + low serverless share ⇒ more room to productionise / move to serverless. A directional signal, capped so it never claims an implausibly large fraction; the Recommendations tab has the specific, evidence-backed plays." /></span>), align: "right", sortValue: (r) => r.savings_pct, render: (r) => <span className="tabular-nums">{fmtPct(r.savings_pct)}</span> },
     { key: "automated", header: (<span className="inline-flex items-center gap-1">Automation %<InfoTip text="Share of this workspace's DBUs that run on AUTOMATED compute — scheduled Jobs + DLT/Lakeflow pipelines — vs interactive/all-purpose/SQL. Higher = more of the workload is productionised (typically cheaper + more predictable); low automation is common for exploratory/data-science workspaces and isn't inherently bad." /></span>), sortValue: (r) => r.automated_pct, render: (r) => <ProgressBar value={r.automated_pct} tone="info" /> },
-    { key: "complexity", header: "Complexity", align: "center", sortValue: (r) => r.complexity, render: (r) => <Pill className="bg-border/60 text-neutral">{r.complexity}</Pill> },
+    { key: "group", header: "Group", priority: "high", sortValue: (r) => r.group ?? "", render: (r) => r.group ? <Pill className="bg-accent/10 text-accent">{r.group}</Pill> : <span className="text-xs text-neutral">—</span> },
+    { key: "environment", header: "Env", align: "center", priority: "high", sortValue: (r) => r.environment ?? "", render: (r) => (
+      r.environment === "Production"
+        ? <Pill className="bg-success/10 text-success">Prod</Pill>
+        : r.environment ? <Pill className="bg-warning/10 text-warning">Non-prod</Pill> : <span className="text-xs text-neutral">—</span>
+    ) },
+    { key: "complexity", header: "Complexity", align: "center", priority: "medium", sortValue: (r) => r.complexity, render: (r) => <Pill className="bg-border/60 text-neutral">{r.complexity}</Pill> },
     { key: "trend", header: (<span className="inline-flex items-center gap-1">Trend<InfoTip text="Weekly spend sparkline. Colour shows direction: red = spend trending up, green = trending down, grey = flat." /></span>), align: "center", sortValue: (r) => (r.trend?.length ? r.trend[r.trend.length - 1] : 0), render: (r) => <Sparkline data={r.trend} /> },
     { key: "movement", header: (<span className="inline-flex items-center gap-1">Movement<InfoTip text="Abnormal cost movement: the latest week vs this workspace's own recent average. A workspace is flagged only when the latest week is both materially higher (≥25%) and statistically unusual (≥1.5σ) for that workspace — a passive exception signal, not manual alerting. Sort this column to surface spikes." /></span>), align: "right", sortValue: (r) => (r.anomaly ? (r.anomaly_pct ?? 0) + 100 : (r.anomaly_pct ?? 0)), render: (r) => (
       r.anomaly
@@ -144,6 +163,12 @@ export function WorkspacesPage() {
                 <MultiDropdown label="Automation" value={health} onChange={setHealth} options={[
                   { value: "Good", label: "High (≥60%)" }, { value: "Warning", label: "Medium (25–60%)" }, { value: "Critical", label: "Low (<25%)" },
                 ]} allLabel="All" />
+                {groupOptions.length > 0 && (
+                  <MultiDropdown label="Group" value={grp} onChange={setGrp} options={groupOptions} allLabel="All groups" />
+                )}
+                {envOptions.length > 0 && (
+                  <MultiDropdown label="Environment" value={env} onChange={setEnv} options={envOptions} allLabel="All environments" />
+                )}
                 <SearchBox value={search} onChange={setSearch} placeholder={buEnabled ? "Search workspace or BU…" : "Search workspace…"} />
               </FilterBar>
 
