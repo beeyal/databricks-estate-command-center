@@ -136,6 +136,35 @@ env:
   # OPTIONAL EXTRAS — every one of these can be LEFT BLANK.
   # ════════════════════════════════════════════════════════════════════════
 
+  # ── Effective cost (#1/#2f) ─────────────────────────────────────────────────
+  # The app's figures are LIST price. Set your blended committed-use / reservation
+  # discount as a fraction (e.g. "0.30" = 30% off) and every $ also shows effective
+  # cost (list × (1 − discount)) with the assumptions stated. BLANK/"0" ⇒ list only
+  # (the app never invents an effective number). Azure VM/infra cost is NOT here —
+  # that's an Azure Cost Management reconciliation, surfaced as an explicit caveat.
+  - name: FINOPS_EFFECTIVE_DISCOUNT
+    value: ""
+
+  # ── Workspace grouping by naming convention (#2a) ───────────────────────────
+  # Ordered "PREFIX:Label" rules, ";"-separated; first matching prefix wins
+  # (case-insensitive). BLANK ⇒ the built-in AEMO defaults (DATA-EDP-:EDP Core;
+  # DATA-ANA-:EDP Edge;FORE-:Forecasting). Anything unmatched groups as "Other".
+  - name: FINOPS_WORKSPACE_GROUPS
+    value: ""
+
+  # ── Production vs Non-production rule (#2b) ─────────────────────────────────
+  # Regex (case-insensitive); a workspace whose name matches is Non-production.
+  # BLANK ⇒ the built-in default (NONPROD / DEV / TEST / SANDBOX / UAT / STG / QA).
+  - name: FINOPS_ENV_NONPROD_PATTERN
+    value: ""
+
+  # ── Workload classification overrides (#2e/#5) ──────────────────────────────
+  # Optional "regex:Bucket" rules (";"-separated) checked BEFORE the built-ins, to
+  # steer job/pipeline names into Batch / Streaming / Interactive / Ad-hoc / ML / AI.
+  # BLANK ⇒ built-in keyword rules only.
+  - name: FINOPS_WORKLOAD_RULES
+    value: ""
+
   # Business-unit reporting: a table you maintain mapping workspace_id → business
   # unit (+ optional owner), e.g. "main.finops_ref.workspace_bu". BLANK ⇒ the app
   # simply hides all BU columns/filters (no fake data). See

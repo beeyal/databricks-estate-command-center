@@ -38,6 +38,11 @@ interface AppState {
   focusRecWorkspace: string | null;
   gotoRecommendationsForWorkspace: (ws: string) => void;
   clearFocusRecWorkspace: () => void;
+  // Deep-link to the Jobs tab scoped to one workspace (Chris feedback #2d — see
+  // a workspace's active jobs). Consumed + cleared by JobsPage.
+  focusJobsWorkspace: string | null;
+  gotoJobsForWorkspace: (ws: string) => void;
+  clearFocusJobsWorkspace: () => void;
   // global filters shared across pages
   workspace: string;
   setWorkspace: (w: string) => void;
@@ -52,6 +57,9 @@ interface AppState {
   // header; blank until config resolves so we don't flash a wrong name.
   customer: string;
   setCustomer: (c: string) => void;
+  // Effective-cost discount from /api/config (#1/#2f). 0 ⇒ list only.
+  effectiveDiscount: number;
+  setEffectiveDiscount: (d: number) => void;
   // deploy-time feature flags (SPEC §10) — set once from /api/config
   features: Features;
   setFeatures: (f: Features) => void;
@@ -73,6 +81,9 @@ export const useAppStore = create<AppState>((set) => ({
   focusRecWorkspace: null,
   gotoRecommendationsForWorkspace: (ws) => set({ activePage: "recommendations", focusRecWorkspace: ws }),
   clearFocusRecWorkspace: () => set({ focusRecWorkspace: null }),
+  focusJobsWorkspace: null,
+  gotoJobsForWorkspace: (ws) => set({ activePage: "jobs", focusJobsWorkspace: ws }),
+  clearFocusJobsWorkspace: () => set({ focusJobsWorkspace: null }),
   workspace: "all",
   setWorkspace: (w) => set({ workspace: w }),
   timeRange: "30d",
@@ -90,6 +101,8 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrencies: (cs) => set({ currencies: cs.length ? cs : DEFAULT_CURRENCIES }),
   customer: "",
   setCustomer: (c) => set({ customer: c }),
+  effectiveDiscount: 0,
+  setEffectiveDiscount: (d) => set({ effectiveDiscount: d }),
   features: DEFAULT_FEATURES,
   setFeatures: (f) => set({ features: f }),
   buEnabled: true,

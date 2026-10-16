@@ -42,6 +42,15 @@ _DEFAULTS: dict[str, Any] = {
     # live once a warehouse + gold schema are configured; otherwise it falls back to
     # demo with a "finish setup" banner (see app.py). Explicit USE_LIVE=false stays demo.
     "use_live": True,
+    # Effective-cost calibration (Chris feedback #1/#2f). The app's figures are
+    # LIST price (system.billing.usage × list_prices). A customer's real invoice is
+    # list minus committed-use discount / reservations / private pricing. There's no
+    # system-table source for that, so it's a single configurable factor: effective
+    # ≈ list × (1 − effective_discount). 0.0 ⇒ show list only (no fabricated
+    # effective number). e.g. 0.30 = a 30% blended discount. Azure VM/infra cost is
+    # NOT in Databricks system tables at all — that stays an Azure Cost Management
+    # reconciliation, surfaced as an explicit caveat, never invented here.
+    "effective_discount": 0.0,
     "genie_space_id": "",
     "warehouse_id": "",
     "fx_rate": 1.52,
@@ -131,8 +140,14 @@ def get_settings() -> dict[str, Any]:
         fx = float(fx_raw)
     except (TypeError, ValueError):
         fx = float(_DEFAULTS["fx_rate"])
+    try:
+        eff = float(_resolve_scalar(["FINOPS_EFFECTIVE_DISCOUNT"], "effective_discount"))
+        eff = min(max(eff, 0.0), 0.95)  # clamp to a sane 0-95%
+    except (TypeError, ValueError):
+        eff = 0.0
     return {
         "use_live": _as_bool(use_live_raw, False),
+        "effective_discount": eff,
         "genie_space_id": _resolve_scalar(["GENIE_SPACE_ID", "FINOPS_GENIE_SPACE_ID"], "genie_space_id"),
         "warehouse_id": _resolve_scalar(["DATABRICKS_WAREHOUSE_ID", "FINOPS_WAREHOUSE_ID"], "warehouse_id"),
         "fx_rate": fx,

@@ -711,6 +711,10 @@ def get_config() -> dict[str, Any]:
         ],
         "fx_aud": FINOPS_FX_AUD,
         "base_currency": "USD",
+        # Effective-cost calibration (Chris feedback #1/#2f). Figures are LIST price;
+        # effective ≈ list × (1 − effective_discount). 0 ⇒ list only (the UI shows a
+        # cost-basis note + how to calibrate, and never invents an effective number).
+        "effective_discount": float(_SETTINGS.get("effective_discount") or 0.0),
         # Deploy-time feature flags (SPEC §10). The frontend reads these once and
         # conditionally renders: Ask Genie banner (genie), Data Quality tab (dqm),
         # LLM narration (ai_narration). When a flag is off the matching endpoint

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchJobs } from "../api/client";
 import { useApi } from "../hooks/useApi";
-import { useCurrency, useFeatures, useBuEnabled } from "../store/appStore";
+import { useCurrency, useFeatures, useBuEnabled, useAppStore } from "../store/appStore";
 import { PageShell, LoadingCard, ErrorCard } from "../components/layout/PageShell";
 import { DataTable } from "../components/shared/DataTable";
 import type { Column } from "../components/shared/DataTable";
@@ -52,6 +52,16 @@ export function JobsPage() {
   const [workload, setWorkload] = useState<string[]>([]);
   const [why, setWhy] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<string[]>([]);
+  // Deep-link from a workspace ("view this workspace's jobs", Chris #2d): seed the
+  // workspace filter from the store once, then clear it.
+  const focusJobsWorkspace = useAppStore((s) => s.focusJobsWorkspace);
+  const clearFocusJobsWorkspace = useAppStore((s) => s.clearFocusJobsWorkspace);
+  useEffect(() => {
+    if (focusJobsWorkspace) {
+      setWorkspace([focusJobsWorkspace]);
+      clearFocusJobsWorkspace();
+    }
+  }, [focusJobsWorkspace, clearFocusJobsWorkspace]);
   const [bu, setBu] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState("30d");
   const [search, setSearch] = useState("");

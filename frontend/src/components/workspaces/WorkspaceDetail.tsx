@@ -1,6 +1,6 @@
 import { fetchWorkspaceDetail } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
-import { useCurrency, useBuEnabled } from "../../store/appStore";
+import { useCurrency, useBuEnabled, useAppStore } from "../../store/appStore";
 import { LoadingCard, ErrorCard } from "../layout/PageShell";
 import { StatusPill, Pill } from "../shared/Pill";
 import { InfoTip } from "../shared/InfoTip";
@@ -114,6 +114,7 @@ function TopList<T extends SpendByEntity>({
 export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const cur = useCurrency();
   const buEnabled = useBuEnabled();
+  const gotoJobsForWorkspace = useAppStore((s) => s.gotoJobsForWorkspace);
   const { data, loading, error } = useApi(() => fetchWorkspaceDetail(workspaceId), [workspaceId]);
 
   if (loading) return <LoadingCard label="Loading workspace detail…" />;
@@ -133,6 +134,14 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
         )}
         <StatusPill status={d.health} />
         <Pill className="bg-border/60 text-neutral">{d.complexity}</Pill>
+        <button
+          type="button"
+          onClick={() => gotoJobsForWorkspace(d.workspace)}
+          className="text-xs text-accent hover:underline"
+          title="See the active jobs running in this workspace"
+        >
+          View this workspace's jobs →
+        </button>
         {buEnabled && d.bu && <span className="ml-auto text-xs text-neutral">{d.bu}</span>}
       </div>
 

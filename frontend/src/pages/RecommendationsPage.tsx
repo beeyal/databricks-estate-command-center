@@ -76,6 +76,7 @@ export function RecommendationsPage() {
   // a different scope, or acknowledged), then DataTable scrolls to + expands it.
   const focusRecId = useAppStore((s) => s.focusRecId);
   const clearFocusRec = useAppStore((s) => s.clearFocusRec);
+  const effectiveDiscount = useAppStore((s) => s.effectiveDiscount);
   useEffect(() => {
     if (!focusRecId) return;
     setView("overall");
@@ -222,6 +223,21 @@ export function RecommendationsPage() {
     >
       {loading && !data && <LoadingCard />}
       {error && <ErrorCard message={error} />}
+
+      {/* How savings are estimated — the assumptions behind every $ (Chris feedback #2f). */}
+      <details className="card bg-surface/40 border-l-4 border-l-info text-xs text-neutral">
+        <summary className="text-sm font-semibold text-brand-dark cursor-pointer">How these savings are estimated (assumptions)</summary>
+        <ul className="mt-2 space-y-1 list-disc pl-5 max-w-4xl">
+          <li>Each estimate is <span className="font-medium text-brand-dark">modeled headroom, not a realised or committed saving</span> — validate the specific play (some need an A/B run) before banking it.</li>
+          <li>Estimates are computed on <span className="font-medium text-brand-dark">{effectiveDiscount > 0 ? `effective cost (list − ${fmtPct(effectiveDiscount)})` : "list price"}</span>.
+            {effectiveDiscount > 0
+              ? " Your configured blended discount is applied, so the $ reflect your effective rate."
+              : " Set your blended committed-use / reservation discount (FINOPS_EFFECTIVE_DISCOUNT) to show effective-rate savings instead of list."}</li>
+          <li>Storage/VACUUM figures assume the observed stale-data ratio is reclaimable at the standard storage rate; compute plays assume the workload re-runs at its recent frequency.</li>
+          <li>The estate total is an <span className="font-medium text-brand-dark">upper bound</span> — some plays target the same dollars at different granularity, so don't sum them as independent savings.</li>
+          <li>Excludes Azure VM/infrastructure cost (Azure Cost Management, not Databricks system tables).</li>
+        </ul>
+      </details>
 
       {summary && (
         <KpiRow cols={5}>

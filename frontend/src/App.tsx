@@ -25,7 +25,7 @@ const AiPage = lazy(() => import("./pages/AiPage").then((m) => ({ default: m.AiP
 const DqmPage = lazy(() => import("./pages/DqmPage").then((m) => ({ default: m.DqmPage })));
 
 function App() {
-  const { activePage, setActivePage, setCurrencies, setFeatures, setBuEnabled, setTeamEnabled, setCustomer } = useAppStore();
+  const { activePage, setActivePage, setCurrencies, setFeatures, setBuEnabled, setTeamEnabled, setCustomer, setEffectiveDiscount } = useAppStore();
   const [config, setConfig] = useState<AppConfig | null>(null);
   const features = useFeatures();
 
@@ -38,9 +38,10 @@ function App() {
         if (typeof c.bu_enabled === "boolean") setBuEnabled(c.bu_enabled);
         if (typeof c.team_enabled === "boolean") setTeamEnabled(c.team_enabled);
         if (c.customer) setCustomer(c.customer);
+        if (typeof c.effective_discount === "number") setEffectiveDiscount(c.effective_discount);
       })
       .catch(() => setConfig(null));
-  }, [setCurrencies, setFeatures, setBuEnabled, setTeamEnabled, setCustomer]);
+  }, [setCurrencies, setFeatures, setBuEnabled, setTeamEnabled, setCustomer, setEffectiveDiscount]);
 
   // Guard: if DQM is off but the active page is the DQM tab (e.g. after a flag
   // flip), fall back to Overview so no gated page can render.

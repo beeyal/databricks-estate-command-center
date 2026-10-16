@@ -879,6 +879,30 @@ def _table_records() -> list[dict[str, Any]]:
             reads_30d = rng.choice([0, 0, 0, 4, 12, 40, 180, 900, 2600])
             days_since_read = rng.choice([0, 1, 2, 5, 12]) if reads_30d else rng.choice([34, 61, 96, 141, 210])
             cold = bool((days_since_read > 30 or reads_30d == 0) and size_bytes >= 1e9)
+            # --- usage profile (Chris feedback #6): frequency tier, 6-week read
+            # trend, business-critical flag, and a data watermark / last-update. ---
+            if reads_30d == 0 or cold:
+                usage_tier = "Cold"
+            elif reads_30d >= 180 and days_since_read <= 7:
+                usage_tier = "Hot"
+            else:
+                usage_tier = "Warm"
+            # 6-week read trend, reconciling to reads_30d (~last 4-5 weeks of it),
+            # with mild drift so the sparkline reads naturally.
+            _wk = reads_30d / 4.33 if reads_30d else 0
+            usage_trend = [max(0, round(_wk * (1 + rng.uniform(-0.25, 0.25)))) for _ in range(6)] if reads_30d else [0] * 6
+            # Business-critical: heavily-used curated/serving tables (gold/reporting)
+            # or a hot table read very frequently — the assets to protect in any
+            # optimisation work.
+            business_critical = bool(
+                (schema in ("gold", "reporting") and usage_tier in ("Hot", "Warm"))
+                or (usage_tier == "Hot" and reads_30d >= 900)
+            )
+            # Watermark / last data update: hot tables written recently, cold tables
+            # stale. Distinct from last_optimize/last_vacuum (maintenance ops).
+            _last_update_days = rng.choice([0, 1, 2]) if usage_tier == "Hot" else (
+                rng.choice([1, 3, 7, 14]) if usage_tier == "Warm" else rng.choice([30, 60, 120, 240]))
+            last_updated = (_now() - timedelta(days=_last_update_days)).date().isoformat()
 
             out.append({
                 "fqn": fqn,
@@ -917,6 +941,11 @@ def _table_records() -> list[dict[str, Any]]:
                 "reads_30d": reads_30d,
                 "days_since_read": days_since_read,
                 "cold": cold,
+                # usage profile + lifecycle (Chris feedback #6)
+                "usage_tier": usage_tier,
+                "usage_trend": usage_trend,
+                "business_critical": business_critical,
+                "last_updated": last_updated,
                 # recommendation
                 "recommendation": rec["insight_type"],
                 "rationale": rec["rationale"],

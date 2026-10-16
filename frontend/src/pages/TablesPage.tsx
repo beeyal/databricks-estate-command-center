@@ -9,6 +9,7 @@ import { KpiCard } from "../components/kpi/KpiCard";
 import { KpiRow } from "../components/kpi/KpiRow";
 import { InsightPill, Pill } from "../components/shared/Pill";
 import { InfoTip } from "../components/shared/InfoTip";
+import { Sparkline } from "../components/shared/Sparkline";
 import { fmtBytes, fmtPct, fmtNum } from "../components/shared/format";
 import { ackEmptyMessage } from "../components/shared/AckStatusFilter";
 import { TableDetail } from "../components/tables/TableDetail";
@@ -30,6 +31,7 @@ export function TablesPage() {
   const features = useFeatures();
   const [tableType, setTableType] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<string[]>([]);
+  const [usage, setUsage] = useState<string[]>([]);
   const [needsAction, setNeedsAction] = useState("all");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("open");
@@ -75,7 +77,10 @@ export function TablesPage() {
       header: "catalog.schema.table",
       sortValue: (r) => r.fqn,
       render: (r) => (
-        <span className="inline-flex items-center gap-1.5 max-w-[340px]">
+        <span className="inline-flex items-center gap-1.5 max-w-[360px]">
+          {r.business_critical && (
+            <span className="text-warning shrink-0" title="Business-critical: heavily-used curated/serving table — protect during optimisation work">★</span>
+          )}
           <span className="text-xs font-mono truncate" title={r.fqn}>{r.fqn}</span>
           {r.cold && (
             <Pill className="bg-info/15 text-info" >
@@ -120,6 +125,39 @@ export function TablesPage() {
           </Pill>
         </span>
       ),
+    },
+    {
+      key: "usage",
+      priority: "high",
+      header: (
+        <span className="inline-flex items-center gap-1">
+          Usage
+          <InfoTip text="How frequently the table is queried: Hot (read often + recently), Warm, or Cold (rarely/never read). Shows the last-30-day read count and a 6-week read trend. Cold + large tables are archive/retention candidates; Hot curated tables are the ones to protect." />
+        </span>
+      ),
+      sortValue: (r) => r.reads_30d ?? 0,
+      render: (r) => (
+        <div className="flex items-center gap-2">
+          <Pill className={r.usage_tier === "Hot" ? "bg-success/15 text-success" : r.usage_tier === "Cold" ? "bg-info/15 text-info" : "bg-warning/15 text-warning"}>
+            {r.usage_tier ?? "—"}
+          </Pill>
+          <span className="tabular-nums text-xs text-neutral w-14 text-right" title={`${r.reads_30d ?? 0} reads in the last 30 days`}>{fmtNum(r.reads_30d ?? 0, { compact: true })}/30d</span>
+          {r.usage_trend && r.usage_trend.some((x) => x > 0) && <Sparkline data={r.usage_trend} />}
+        </div>
+      ),
+    },
+    {
+      key: "last_updated",
+      priority: "low",
+      header: (
+        <span className="inline-flex items-center gap-1">
+          Last updated
+          <InfoTip text="Data watermark — when the table's data was last written/updated (distinct from the last OPTIMIZE/VACUUM maintenance op). A stale watermark on a supposedly-live table is worth investigating." />
+        </span>
+      ),
+      align: "right",
+      sortValue: (r) => r.last_updated ?? "",
+      render: (r) => <span className="tabular-nums text-xs text-neutral">{r.last_updated ?? "—"}</span>,
     },
     {
       key: "size",
@@ -286,6 +324,17 @@ export function TablesPage() {
           options={catalogOptions}
           allLabel="All catalogs"
         />
+        <MultiDropdown
+          label="Usage"
+          value={usage}
+          onChange={setUsage}
+          options={[
+            { value: "Hot", label: "Hot (used often)" },
+            { value: "Warm", label: "Warm" },
+            { value: "Cold", label: "Cold (rarely/never read)" },
+          ]}
+          allLabel="All usage"
+        />
         <Dropdown
           label="Needs action"
           value={needsAction}
@@ -307,7 +356,7 @@ export function TablesPage() {
         <DataTable
           columns={columns}
           updating={loading && !!data}
-          rows={data.data}
+          rows={usage.length ? data.data.filter((r) => usage.includes(r.usage_tier ?? "")) : data.data}
           rowKey={(r) => r.fqn}
           initialSort={{ key: "size", dir: "desc" }}
           emptyMessage={features.writeback ? ackEmptyMessage(status, "tables") : "No tables match the current filters."}

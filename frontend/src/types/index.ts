@@ -102,6 +102,9 @@ export interface AppConfig {
   currencies?: CurrencyOption[];
   fx_aud?: number;
   base_currency?: string;
+  // Effective-cost calibration (#1/#2f): figures are list price; effective ≈
+  // list × (1 − effective_discount). 0 ⇒ list only.
+  effective_discount?: number;
   features?: Features;
   genie_space_id?: string;
   // Whether the business-unit dimension exists (demo always; live only when a
@@ -538,6 +541,12 @@ export interface TableRow extends AckFields {
   days_since_read?: number;
   cold?: boolean;
   size_snapshot?: string;
+  // Usage profile + lifecycle (Chris feedback #6): frequency tier, 6-week read
+  // trend, business-critical flag, and the data watermark / last-update.
+  usage_tier?: "Hot" | "Warm" | "Cold" | string;
+  usage_trend?: number[];
+  business_critical?: boolean;
+  last_updated?: string;
   recommendation: InsightType;
   rationale: string;
   next_steps: string[];

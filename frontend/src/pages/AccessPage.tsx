@@ -60,6 +60,24 @@ export function AccessPage() {
       title="Access"
       subtitle="Factual bidirectional grants explorer — who can access a securable, and what a principal can access. No recommendations, just the grant graph."
     >
+      {/* What this tab is for (Chris feedback #3 — the tab wasn't self-explanatory). */}
+      <div className="card bg-surface/40 border-l-4 border-l-accent">
+        <h3 className="text-sm font-semibold mb-1">What this tab shows</h3>
+        <p className="text-xs text-neutral max-w-4xl">
+          A read-only map of Unity Catalog access across the estate — the real grant graph, not a recommendation engine.
+          Use it two ways with the toggle below:
+        </p>
+        <ul className="text-xs text-neutral mt-2 space-y-1 list-disc pl-5 max-w-4xl">
+          <li><span className="font-medium text-brand-dark">Who can access this?</span> — pick a securable (catalog / schema / table) and see every principal that can reach it and how (direct grant vs inherited vs via a group).</li>
+          <li><span className="font-medium text-brand-dark">What can this principal access?</span> — pick a user, group or service principal and see everything it can reach.</li>
+        </ul>
+        <p className="text-xs text-neutral mt-2 max-w-4xl">
+          The KPIs below profile the identity population; the <span className="font-medium text-brand-dark">Risk flags</span> surface
+          deterministic access risks (over-privilege, admin sprawl, stale tokens) for review. Nothing here changes access —
+          it's for audit, least-privilege review and answering "who can see what".
+        </p>
+      </div>
+
       {!kpisReady && loading && <LoadingCard label="Loading access graph…" />}
       {err && !principals.data && <ErrorCard message={err} />}
       {kpisReady && (
