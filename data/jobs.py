@@ -550,6 +550,18 @@ def _job_records() -> list[dict[str, Any]]:
             growth_pct=m["growth"], streaming=m["streaming"], dlt=m["dlt"], cost_usd_month=m["cost"],
             trend=trend, detail=detail,
         ))
+        # Deterministic sample definition metadata (schedule / paused / owner /
+        # last run) so the demo exercises the same columns live fills.
+        h = _stable_hash(job_id)
+        sched = "CONTINUOUS" if m["streaming"] else ("CRON" if h % 4 else "MANUAL")
+        _apply_meta(rows[-1], {
+            "schedule_type": sched, "paused": (h % 7 == 0) and sched != "MANUAL",
+            "cron": "0 0 2 * * ?" if sched == "CRON" else "",
+            "creator": f"{ws['workspace'].split('-')[-2].lower() if '-' in ws['workspace'] else 'data'}.eng@example.com",
+            "run_as": f"svc-{(ws['workspace'].split('-')[1] if '-' in ws['workspace'] else 'data').lower()}@example.com",
+            "deleted": 0,
+        }, f"2026-07-{28 - (h % 6):02d} {h % 24:02d}:{(h // 24) % 60:02d}",
+            "CONTINUOUS" if sched == "CONTINUOUS" else ("PERIODIC" if sched == "CRON" else "ONE_TIME"))
 
     rows.sort(key=lambda r: -r["cost_usd_month"])
     return rows
@@ -611,7 +623,9 @@ SELECT
   approx_percentile(dur_s, 0.5)                                       AS median_dur,
   AVG(CASE WHEN period_end_time >= dateadd(day,-3,current_timestamp()) THEN dur_s END) AS recent_dur,
   regr_slope(dur_s, unix_timestamp(period_end_time)/86400.0)          AS growth_slope,
-  MAX(CASE WHEN trigger_type = 'CONTINUOUS' THEN 1 ELSE 0 END)         AS streaming
+  MAX(CASE WHEN trigger_type = 'CONTINUOUS' THEN 1 ELSE 0 END)         AS streaming,
+  CAST(MAX(period_end_time) AS STRING)                                 AS last_run,
+  mode(trigger_type)                                                   AS main_trigger
 FROM split
 GROUP BY 1, 2
 HAVING COUNT(*) > 0
@@ -718,6 +732,78 @@ GROUP BY 1, 2
 """
 
 
+# Job DEFINITION metadata (best-effort enrichment): the real job name (run_name
+# is the run's name, which can differ), owner, and whether the job is on an
+# active schedule — what an environment clean-up needs ("which DEV/TEST/PRE-PROD
+# jobs are still scheduled, and who owns them?"). Latest row per job; deleted
+# jobs are kept but flagged. Newer columns (trigger_type / paused /
+# *_user_name) aren't in every metastore yet, so there's a minimal fallback.
+_JOBS_META_SQL = """
+SELECT CAST(workspace_id AS STRING) AS workspace_id, CAST(job_id AS STRING) AS job_id,
+       name, trigger_type AS schedule_type, paused,
+       trigger.schedule.quartz_cron_expression AS cron,
+       COALESCE(creator_user_name, creator_id) AS creator,
+       COALESCE(run_as_user_name, run_as) AS run_as,
+       CASE WHEN delete_time IS NOT NULL THEN 1 ELSE 0 END AS deleted
+FROM system.lakeflow.jobs
+QUALIFY row_number() OVER (PARTITION BY workspace_id, job_id ORDER BY change_time DESC) = 1
+"""
+_JOBS_META_SQL_MIN = """
+SELECT CAST(workspace_id AS STRING) AS workspace_id, CAST(job_id AS STRING) AS job_id,
+       name, CAST(NULL AS STRING) AS schedule_type, CAST(NULL AS BOOLEAN) AS paused,
+       CAST(NULL AS STRING) AS cron, creator_id AS creator, run_as,
+       CASE WHEN delete_time IS NOT NULL THEN 1 ELSE 0 END AS deleted
+FROM system.lakeflow.jobs
+QUALIFY row_number() OVER (PARTITION BY workspace_id, job_id ORDER BY change_time DESC) = 1
+"""
+
+# How the job is set to start (system.lakeflow.jobs.trigger_type), and what most
+# of its runs in the window were started by (job_run_timeline.trigger_type).
+_SCHEDULE_LABEL = {
+    "CRON": "Scheduled (cron)", "PERIODIC": "Scheduled (interval)", "CONTINUOUS": "Continuous",
+    "FILE_ARRIVAL": "File arrival", "TABLE_UPDATE": "Table update", "TABLE": "Table update",
+    "MODEL": "Model update", "MANUAL": "Manual / API", "NONE": "Manual / API",
+}
+_RUN_TRIGGER_LABEL = {
+    "PERIODIC": "Schedule", "CRON": "Schedule", "ONE_TIME": "Manual / API", "ONETIME": "Manual / API",
+    "RETRY": "Retry", "RUN_JOB_TASK": "Parent job", "FILE_ARRIVAL": "File arrival",
+    "CONTINUOUS": "Continuous", "TABLE": "Table update", "CONTINUOUS_RESTART": "Continuous",
+    "MODEL": "Model update",
+}
+
+
+def _jobs_meta(warehouse_id: str) -> dict[tuple[str, str], dict[str, Any]]:
+    from data import live
+    try:
+        rows = live._run(warehouse_id, _JOBS_META_SQL, "system.lakeflow.jobs")
+    except live.LiveError:
+        rows = live._run(warehouse_id, _JOBS_META_SQL_MIN, "system.lakeflow.jobs (minimal)")
+    return {(str(r.get("workspace_id")), str(r.get("job_id"))): r for r in rows}
+
+
+def _apply_meta(row: dict[str, Any], meta: dict[str, Any] | None, last_run: str, main_trigger: str) -> None:
+    """Attach definition metadata + last run to a built row (in place)."""
+    m = meta or {}
+    if m.get("name"):
+        row["job_name"] = str(m["name"])
+    st = str(m.get("schedule_type") or "").upper()
+    paused_raw = m.get("paused")
+    paused = None if paused_raw is None else str(paused_raw).lower() in ("true", "1")
+    row["schedule"] = _SCHEDULE_LABEL.get(st, st.title().replace("_", " ") if st else "—")
+    row["paused"] = paused
+    # "Active schedule" = defined with a time/event trigger AND not paused. This is
+    # the clean-up signal: a non-prod job that will keep running (and billing)
+    # until someone pauses it.
+    row["schedule_active"] = bool(st and st not in ("MANUAL", "NONE") and paused is False)
+    row["cron"] = str(m.get("cron") or "")
+    row["owner"] = str(m.get("run_as") or m.get("creator") or "")
+    row["creator"] = str(m.get("creator") or "")
+    row["deleted"] = bool(m) and str(m.get("deleted")) in ("1", "1.0", "True", "true")
+    row["last_run"] = (last_run or "")[:16].replace("T", " ")
+    row["started_by"] = _RUN_TRIGGER_LABEL.get(str(main_trigger or "").upper(),
+                                               str(main_trigger or "—").title().replace("_", " "))
+
+
 def _compute_type(product: str, is_serverless: bool, is_dlt: bool, has_cost_row: bool = True) -> str:
     if is_serverless:
         return COMPUTE_SERVERLESS
@@ -790,6 +876,7 @@ def jobs_live(warehouse_id: str) -> dict[str, Any]:
         f_trend = pool.submit(live._run, warehouse_id, _COST_TREND_SQL, "system.billing.usage (jobs cost trend)")
         f_names = pool.submit(live._workspace_names, warehouse_id)
         f_bu = pool.submit(live._workspace_bu, warehouse_id)
+        f_meta = pool.submit(_jobs_meta, warehouse_id)
 
         # 1) Run metrics (required). If this fails, the tab has nothing to show —
         #    return an empty, well-formed payload with an honest reason. Only a
@@ -837,6 +924,11 @@ def jobs_live(warehouse_id: str) -> dict[str, Any]:
             bu_by_ws = f_bu.result()
         except Exception:  # noqa: BLE001
             bu_by_ws = {}
+        # Job definitions (name / schedule / paused / owner) — optional enrichment.
+        try:
+            meta_by_job = f_meta.result()
+        except Exception:  # noqa: BLE001
+            meta_by_job = {}
 
     # The "Dur trend" sparkline is fetched AFTER row assembly + attention-ranking,
     # scoped to just the top-N job ids the list actually ships (see below) — a daily
@@ -896,6 +988,8 @@ def jobs_live(warehouse_id: str) -> dict[str, Any]:
             median_dur_s=median_dur, recent_dur_s=recent_dur, growth_pct=growth_pct,
             streaming=streaming, dlt=dlt, cost_usd_month=cost, trend=dur_trend, detail=detail,
         ))
+        _apply_meta(rows[-1], meta_by_job.get((ws, jid)), str(r.get("last_run") or ""),
+                    str(r.get("main_trigger") or ""))
 
     rows.sort(key=lambda x: -x["cost_usd_month"])
 

@@ -5,9 +5,9 @@ import { InfoTip } from "../shared/InfoTip";
 import { fmtMoney, fmtPct } from "../shared/format";
 import type { LensBucket } from "../../types";
 
-// Operational cost lenses (Chris feedback #2a/#2b/#2c/#2e): the same estate spend
+// Operational cost lenses: the same estate spend
 // re-expressed by workload, Classic vs Serverless, environment, and naming-
-// convention group — the way AEMO actually reasons about cost.
+// convention group — the way a platform team reasons about cost.
 
 // Ordered categorical palette (brand-adjacent, colour-blind-safe enough for ≤5
 // slices). Keyed by slot, not by label, so it's stable across lenses.

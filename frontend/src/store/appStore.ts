@@ -38,7 +38,7 @@ interface AppState {
   focusRecWorkspace: string | null;
   gotoRecommendationsForWorkspace: (ws: string) => void;
   clearFocusRecWorkspace: () => void;
-  // Deep-link to the Jobs tab scoped to one workspace (Chris feedback #2d — see
+  // Deep-link to the Jobs tab scoped to one workspace (customer feedback — see
   // a workspace's active jobs). Consumed + cleared by JobsPage.
   focusJobsWorkspace: string | null;
   gotoJobsForWorkspace: (ws: string) => void;

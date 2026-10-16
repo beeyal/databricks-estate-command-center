@@ -42,7 +42,7 @@ _DEFAULTS: dict[str, Any] = {
     # live once a warehouse + gold schema are configured; otherwise it falls back to
     # demo with a "finish setup" banner (see app.py). Explicit USE_LIVE=false stays demo.
     "use_live": True,
-    # Effective-cost calibration (Chris feedback #1/#2f). The app's figures are
+    # Effective-cost calibration. The app's figures are
     # LIST price (system.billing.usage × list_prices). A customer's real invoice is
     # list minus committed-use discount / reservations / private pricing. There's no
     # system-table source for that, so it's a single configurable factor: effective

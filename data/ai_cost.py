@@ -35,7 +35,8 @@ PRODUCT_LABEL = {c: l for c, l in AI_PRODUCTS}
 CAVEATS = [
     "Covers the AI-family billing_origin_product lines (Model Serving, Foundation Model API, Vector Search, Agent Bricks, AI Functions, fine-tuning). Genie is tracked separately on the Genie $ page.",
     "Endpoint + owner come from usage_metadata.endpoint_name and identity_metadata; where an endpoint is shared the owner is the creator, not every caller.",
-    "The Databricks Assistant is not metered and does not appear here.",
+    "The Databricks Assistant is not metered and does not appear here. Genie (Spaces and Genie Code) is billed as its own product — see the Genie $ tab, not this one.",
+    "'Who is calling' comes from system.serving.endpoint_usage (every request's caller, including shared pay-per-token endpoints). Its $ is an ESTIMATE: each endpoint's billed cost split across its callers by token share.",
     "$ is list-price reference (usage_quantity x pricing.effective_list.default); the Account Console is the source of truth. Provisioned-throughput endpoints bill whether or not they serve traffic.",
 ]
 
@@ -226,10 +227,41 @@ def assemble(rows_all: list[dict[str, Any]], workspace: str | None = None,
     }
 
 
+# Sample callers for demo mode: who actually sends requests to the endpoints
+# (live reads system.serving.endpoint_usage). Shared endpoints have several
+# callers besides their owner — exactly the people billing alone never shows.
+_DEMO_CALLERS = [
+    ("raj.patel@acme.com", ["support-copilot", "doc-summariser-llm"], 0.22),
+    ("sarah.mckenzie@acme.com", ["doc-summariser-llm"], 0.15),
+    ("hannah.wu@acme.com", ["ai_classify() batch", "doc-summariser-llm"], 0.12),
+    ("tom.nguyen@acme.com", ["support-copilot"], 0.11),
+    ("wei.zhang@acme.com", ["ops-triage-agent", "fraud-scoring-rt"], 0.10),
+    ("priya.nathan@acme.com", ["trade-docs-index", "support-copilot"], 0.09),
+    ("a7c1e0d2-5f3b-4e8a-9c21-0b6d4f8e2a11", ["meter-anomaly-agent"], 0.08),
+    ("james.oleary@acme.com", ["ai_extract() pipeline"], 0.07),
+    ("daniel.foster@acme.com", ["demand-forecast"], 0.06),
+]
+
+
+def _demo_callers(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    total = float(payload.get("summary", {}).get("total_list_usd_month") or 0)
+    out = []
+    for who, eps, share in _DEMO_CALLERS:
+        out.append({
+            "requester": who, "requests": int(share * 182_000), "tokens": int(share * 410_000_000),
+            "est_usd_month": round(total * share, 2), "endpoints": eps, "num_endpoints": len(eps),
+            "workspaces": [], "is_service_principal": "@" not in who,
+        })
+    return out
+
+
 def get_ai_cost(workspace: str | None = None) -> dict[str, Any]:
     """AI-spend payload for /api/ai-cost (demo mode). Live mode calls ``assemble``
     directly with endpoint rows from system.billing.usage."""
-    return assemble(_rows(), workspace)
+    out = assemble(_rows(), workspace)
+    out["callers"] = _demo_callers(out)
+    out["callers_note"] = ""
+    return out
 
 
 if __name__ == "__main__":

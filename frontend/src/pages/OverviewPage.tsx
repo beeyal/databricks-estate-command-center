@@ -105,7 +105,7 @@ export function OverviewPage() {
             </div>
           )}
 
-          {/* Cost basis + reconciliation note (Chris feedback #1/#2f) — honest about
+          {/* Cost basis + reconciliation note — honest about
               what the figures are and what they exclude, so they can be calibrated
               against Azure billing. */}
           <div className="card bg-surface/40 border-l-4 border-l-info text-xs text-neutral">
@@ -144,8 +144,7 @@ export function OverviewPage() {
           {/* Driver change vs prior 30 days (%) — spike detection — SPEC §9 */}
           <MoMChangeBar mom={data.data.cost_drivers?.mom ?? []} />
 
-          {/* Operational cost lenses — workload / compute-type / environment / group
-              (Chris feedback #2a/#2b/#2c/#2e) */}
+          {/* Operational cost lenses — workload / compute-type / environment / group */}
           <CostLenses />
 
           <div className="card">

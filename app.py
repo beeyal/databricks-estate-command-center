@@ -74,6 +74,10 @@ elif _USE_LIVE_REQUESTED and not GOLD_SCHEMA and not _ALLOW_LIVE_NO_GOLD:
                         "FINOPS_ALLOW_LIVE_NO_GOLD=true (slow; not for production).")
 # Effective mode: live only when it can actually serve; otherwise demo (with the note).
 USE_LIVE = bool(_USE_LIVE_REQUESTED and not _LIVE_SETUP_NOTE)
+# Naming-convention grouping: sample rules in demo (match the seeded workspaces);
+# live groups only when FINOPS_WORKSPACE_GROUPS is configured.
+from data import grouping as _grouping  # noqa: E402
+_grouping.set_demo_mode(not USE_LIVE)
 # Dual-currency (SPEC §9): list prices are USD; AUD = USD × FX. Configurable so
 # the rate can be pinned per deployment. Clearly labelled in the UI as an
 # indicative conversion applied to list-price USD, not a billed AUD figure.
@@ -297,6 +301,8 @@ def _self_provision() -> None:
                         or cl.clusters_live(WAREHOUSE_ID, 30))),
             ("governance", lambda: _gold_or_compute(
                 "governance", lambda: _live.governance_live(WAREHOUSE_ID, INGEST_SCHEMA))),
+            ("pipelines", lambda: _gold_or_compute(
+                "pipelines", lambda: __import__("data.pipelines", fromlist=["pipelines_live"]).pipelines_live(WAREHOUSE_ID))),
         )
 
         def _warm_one(build):
@@ -711,7 +717,7 @@ def get_config() -> dict[str, Any]:
         ],
         "fx_aud": FINOPS_FX_AUD,
         "base_currency": "USD",
-        # Effective-cost calibration (Chris feedback #1/#2f). Figures are LIST price;
+        # Effective-cost calibration. Figures are LIST price;
         # effective ≈ list × (1 − effective_discount). 0 ⇒ list only (the UI shows a
         # cost-basis note + how to calibrate, and never invents an effective number).
         "effective_discount": float(_SETTINGS.get("effective_discount") or 0.0),
@@ -1124,6 +1130,7 @@ def _annotate_ws_grouping(rows: list[dict[str, Any]]) -> None:
         name = r.get("workspace") or r.get("workspace_name") or ""
         r["group"] = grouping.workspace_group(name)
         r["environment"] = grouping.workspace_environment(name)
+        r["env_tier"] = grouping.workspace_tier(name)
 
 
 @app.get("/api/workspaces")
@@ -1133,20 +1140,23 @@ def get_workspaces(
     search: str = Query(""),
     group: str = Query("all"),
     environment: str = Query("all"),
+    env_tier: str = Query("all"),
 ) -> dict[str, Any]:
     if USE_LIVE:
         from data import live
 
         rows, live_source, _c = _cached_rows_or_live("workspaces", lambda: live.workspaces_live(WAREHOUSE_ID))
     else:
-        rows = demo.get_workspaces()
+        rows = [dict(r) for r in demo.get_workspaces()]   # copy: annotation below mutates
         live_source = False
     # Annotate abnormal cost-movement flags + naming-convention group/environment
     # before filtering so those signals are present regardless of narrowing.
     _annotate_ws_anomalies(rows)
     _annotate_ws_grouping(rows)
     cx = _multi(complexity); hl = _multi(health)
-    grp = _multi(group); env = _multi(environment)
+    grp = _multi(group); env = _multi(environment); trf = _multi(env_tier)
+    if trf:
+        rows = [r for r in rows if r.get("env_tier") in trf]
     if grp:
         rows = [r for r in rows if r.get("group") in grp]
     if env:
@@ -1222,6 +1232,9 @@ def get_jobs(
     why: str = Query("all"),        # all | high-setup-queue | failing | spiking | growing | cost-anomaly
     workspace: str = Query("all"),  # workspace name (or "all")
     workload: str = Query("all"),   # workload type (Batch | Streaming | Interactive / Ad-hoc | ML / AI | Other)
+    environment: str = Query("all"),  # Production | Non-production (from the workspace name)
+    env_tier: str = Query("all"),     # Dev | Test | Pre-prod | Sandbox | Non-prod | Prod | Unclassified
+    schedule: str = Query("all"),     # all | active (scheduled + not paused) | paused | manual
     bu: str = Query("all"),         # business unit (or "all") — from the workspace->BU mapping
     time_range: str = Query("30d"), # run window: 30d | 7d | 24h
     search: str = Query(""),
@@ -1269,13 +1282,27 @@ def get_jobs(
             scaled.append(r)
         rows = scaled
 
-    # Classify each job into an operational workload type (Chris feedback #5):
-    # batch / streaming / interactive / ML-AI, from the job name + its compute.
+    # Copy rows (never mutate the shared cached/gold payload) and annotate each
+    # job with its workspace's environment tier / environment / group, plus an
+    # operational workload type (batch / streaming / interactive / ML-AI) from the
+    # job name + its compute.
     from data import workload as _wl
+    rows = _annotate_env(rows)
     for r in rows:
         r["workload"] = _wl.classify_job(r.get("job_name", ""), r.get("compute_type"))
 
     ct = _multi(compute_type); ws = _multi(workspace); wy = _multi(why); bus = _multi(bu); wlf = _multi(workload)
+    enf = _multi(environment); trf = _multi(env_tier)
+    if enf:
+        rows = [r for r in rows if r.get("environment") in enf]
+    if trf:
+        rows = [r for r in rows if r.get("env_tier") in trf]
+    if schedule == "active":
+        rows = [r for r in rows if r.get("schedule_active")]
+    elif schedule == "paused":
+        rows = [r for r in rows if r.get("paused") is True]
+    elif schedule == "manual":
+        rows = [r for r in rows if not r.get("schedule_active") and r.get("paused") is not True]
     if ct:
         rows = [r for r in rows if r["compute_type"] in ct]
     if wlf:
@@ -1299,7 +1326,7 @@ def get_jobs(
     # job (triage) doesn't shrink the estate cost totals — Jobs is a facts view.
     # Only the visible LIST is status-filtered.
     summary = jobs.summarize(rows)
-    # Workload roll-up (Chris feedback #5): jobs + cost by workload type, so the
+    # Workload roll-up: jobs + cost by workload type, so the
     # Jobs view is actionable by batch/streaming/etc. rather than one flat list.
     _wl_roll: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -1309,6 +1336,29 @@ def get_jobs(
     for b in _wl_roll.values():
         b["cost_usd_month"] = round(b["cost_usd_month"], 2)
     summary["by_workload"] = sorted(_wl_roll.values(), key=lambda x: -x["cost_usd_month"])
+    # Activity by environment tier — the DEV / TEST / PRE-PROD clean-up view: how
+    # many jobs ran in each tier, how many are still on an active schedule, and
+    # what they cost. Over the filtered set (before the ack/status overlay).
+    _tiers: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        t = _tiers.setdefault(r.get("env_tier") or "Unclassified", {
+            "env_tier": r.get("env_tier") or "Unclassified", "environment": r.get("environment") or "",
+            "num_jobs": 0, "num_scheduled": 0, "cost_usd_month": 0.0, "runs": 0})
+        t["num_jobs"] += 1
+        t["num_scheduled"] += 1 if r.get("schedule_active") else 0
+        t["cost_usd_month"] += float(r.get("cost_usd_month") or 0)
+        t["runs"] += int(r.get("runs") or 0)
+    for t in _tiers.values():
+        t["cost_usd_month"] = round(t["cost_usd_month"], 2)
+    _order = {"Dev": 0, "Test": 1, "Pre-prod": 2, "Sandbox": 3, "Non-prod": 4, "Prod": 5, "Unclassified": 6}
+    summary["by_env_tier"] = sorted(_tiers.values(), key=lambda x: _order.get(x["env_tier"], 9))
+    _np = [r for r in rows if r.get("environment") == "Non-production"]
+    summary["nonprod"] = {
+        "num_jobs": len(_np),
+        "num_scheduled": sum(1 for r in _np if r.get("schedule_active")),
+        "cost_usd_month": round(sum(float(r.get("cost_usd_month") or 0) for r in _np), 2),
+        "scheduled_cost_usd_month": round(sum(float(r.get("cost_usd_month") or 0) for r in _np if r.get("schedule_active")), 2),
+    }
     acks = _acks_for("job")
     ack_sink = _new_counts_sink(acks)
     rows = _apply_acks(
@@ -1343,6 +1393,93 @@ def get_jobs(
         wrapped["message"] = message
     if ack_sink is not None:
         wrapped["ack_counts"] = ack_sink
+    return wrapped
+
+
+def _annotate_env(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy each row and add the workspace's environment tier (Dev / Test /
+    Pre-prod / Prod …), Production / Non-production environment and
+    naming-convention group, from data/grouping.py. Copies so the shared cached /
+    gold payload rows are never mutated across concurrent requests."""
+    from data import grouping
+    out = []
+    for r in rows:
+        r = dict(r)
+        name = str(r.get("workspace") or "")
+        r["env_tier"] = grouping.workspace_tier(name)
+        r["environment"] = grouping.workspace_environment(name)
+        r["group"] = grouping.workspace_group(name)
+        out.append(r)
+    return out
+
+
+@app.get("/api/pipelines")
+def get_pipelines(
+    workspace: str = Query("all"),
+    pipeline_type: str = Query("all"),   # ETL_PIPELINE | MATERIALIZED_VIEW | STREAMING_TABLE | ...
+    environment: str = Query("all"),     # Production | Non-production
+    env_tier: str = Query("all"),        # Dev | Test | Pre-prod | Sandbox | Non-prod | Prod | Unclassified
+    why: str = Query("all"),             # failing | cost-spike | full-refresh-heavy | continuous | ...
+    bu: str = Query("all"),
+    search: str = Query(""),
+    limit: int = Query(300),             # list cap; 0 = all ("Load all")
+) -> dict[str, Any]:
+    """Per-pipeline cost + health: Lakeflow pipelines AND the pipelines behind SQL
+    materialized views / streaming tables, Lakeflow Connect ingestion and Lakebase
+    synced tables — anything billed with a pipeline id. Observable facts only (no
+    savings estimate). Live is gold-first + fail-soft like Jobs."""
+    from data import pipelines
+
+    message = ""
+    note = ""
+    cached_at = ""
+    if USE_LIVE:
+        payload, cached_at = _gold_or_compute("pipelines", lambda: pipelines.pipelines_live(WAREHOUSE_ID))
+        rows = payload.get("pipelines", [])
+        message = payload.get("message", "")
+        note = payload.get("note", "")
+        live_source = True
+    else:
+        rows = pipelines.pipelines_demo()
+        live_source = False
+
+    rows = _annotate_env(rows)
+    ws = _multi(workspace); pt = _multi(pipeline_type); en = _multi(environment)
+    tr = _multi(env_tier); wy = _multi(why); bus = _multi(bu)
+    if ws:
+        rows = [r for r in rows if _ws_match(r, ws)]
+    if pt:
+        rows = [r for r in rows if r.get("pipeline_type") in pt or r.get("type_label") in pt]
+    if en:
+        rows = [r for r in rows if r.get("environment") in en]
+    if tr:
+        rows = [r for r in rows if r.get("env_tier") in tr]
+    if bus:
+        rows = [r for r in rows if r.get("bu") in bus]
+    if wy:
+        rows = [r for r in rows if any(w in (r.get("reasons") or []) for w in wy)]
+    if search:
+        q = search.lower()
+        rows = [r for r in rows if q in str(r.get("name", "")).lower() or q in str(r.get("pipeline_id", "")).lower()
+                or q in str(r.get("owner", "")).lower()]
+    summary = pipelines.summarize(rows)
+    rows.sort(key=lambda r: (-len(r.get("reasons") or []), -float(r.get("cost_usd_month") or 0)))
+    total = len(rows)
+    capped = None
+    if limit and total > limit:
+        rows = rows[:limit]
+        capped = {"shown": limit, "total": total}
+    wrapped = _wrap(rows, live_source=live_source)
+    wrapped["summary"] = summary
+    wrapped["caveats"] = pipelines.CAVEATS
+    if cached_at:
+        wrapped["cached_at"] = cached_at
+    if capped:
+        wrapped["list_capped"] = capped
+    if message:
+        wrapped["message"] = message
+    if note:
+        wrapped["note"] = note
     return wrapped
 
 
@@ -2348,46 +2485,36 @@ def get_governance(status: str = Query("all")) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# API — operational cost lenses (Chris feedback #2a/#2b/#2c/#2e)
+# API — operational cost lenses
 # ---------------------------------------------------------------------------
 
 @app.get("/api/overview/lenses")
 def get_overview_lenses() -> dict[str, Any]:
-    """Cost re-expressed the way AEMO operates: by workload type, Classic vs
-    Serverless, by Production/Non-production environment, and by naming-convention
-    group. In live mode the environment + group lenses are computed from the real
-    workspace rows (annotated by naming convention); the workload + compute-type
-    lenses fall back to the sample split flagged live_pending until wired to the
-    live cost-driver SKUs."""
+    """Cost re-expressed the way a platform team operates: by workload type,
+    Classic vs Serverless, Production / Non-production, environment tier and
+    naming-convention group. Live: one trailing-30-day billing read so every lens
+    reconciles to the same total (gold-first, cached). Demo: the seeded split."""
     if USE_LIVE:
+        from data import lenses, live
+
+        def _build():
+            jobs_p, _ = _gold_or_compute("jobs", lambda: __import__("data.jobs", fromlist=["jobs_live"]).jobs_live(WAREHOUSE_ID))
+            pipes_p, _ = _gold_or_compute("pipelines", lambda: __import__("data.pipelines", fromlist=["pipelines_live"]).pipelines_live(WAREHOUSE_ID))
+            return lenses.lenses_live(WAREHOUSE_ID, (jobs_p or {}).get("jobs"), (pipes_p or {}).get("pipelines"))
+
         try:
-            from data import live, grouping, workload as wl
-            rows, _ls, _c = _cached_rows_or_live("workspaces", lambda: live.workspaces_live(WAREHOUSE_ID))
-            env_spend: dict[str, float] = {}
-            grp_spend: dict[str, float] = {}
-            for r in rows:
-                name = r.get("workspace") or r.get("workspace_name") or ""
-                s = float(r.get("spend_usd_month") or 0)
-                env_spend[grouping.workspace_environment(name)] = env_spend.get(grouping.workspace_environment(name), 0.0) + s
-                grp_spend[grouping.workspace_group(name)] = grp_spend.get(grouping.workspace_group(name), 0.0) + s
-            ws_total = sum(env_spend.values()) or 1.0
-            # Workload + compute-type still come from the sample split (not yet wired
-            # to live SKU rows) — mark the whole payload live_pending so the UI is honest.
-            sample = demo.get_overview_lenses()
-            payload = {
-                "by_workload": sample["by_workload"],
-                "by_compute_type": sample["by_compute_type"],
-                "by_environment": sorted(
-                    [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in env_spend.items()],
-                    key=lambda x: -x["spend_usd_month"]),
-                "by_group": sorted(
-                    [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in grp_spend.items()],
-                    key=lambda x: -x["spend_usd_month"]),
-            }
-            return _wrap(payload, live_source=False)  # workload/compute not yet live → pending
-        except Exception:  # noqa: BLE001
-            return _wrap(demo.get_overview_lenses(), live_source=False)
-    return _wrap(demo.get_overview_lenses(), live_source=False)
+            payload, cached_at = _gold_or_compute("lenses", _build)
+        except live.LiveError as e:
+            raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
+        env = _wrap(payload, live_source=True)
+        if cached_at:
+            env["cached_at"] = cached_at
+        return env
+    from data import grouping
+    out = dict(demo.get_overview_lenses())
+    out.setdefault("groups_configured", grouping.groups_configured())
+    out.setdefault("window", "this month (sample)")
+    return _wrap(out, live_source=False)
 
 
 # ---------------------------------------------------------------------------

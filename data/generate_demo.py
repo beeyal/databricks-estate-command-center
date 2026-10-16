@@ -515,16 +515,16 @@ def _estate_driver_spend() -> dict[str, float]:
 
 @lru_cache(maxsize=1)
 def _overview_lenses() -> dict[str, Any]:
-    """AEMO's operational cost lenses (Chris feedback #2a/#2b/#2c/#2e), all
-    reconciling to the same estate total:
+    """Operational cost lenses (sample data), all reconciling to the same estate
+    total:
 
       * by_workload      — batch / streaming / interactive / ML-AI / other, from
                            the cost-driver → workload map (data/workload.py).
       * by_compute_type  — Classic vs Serverless, split from the SKU names
                            (SERVERLESS_* SKUs vs the rest).
       * by_environment   — Production vs Non-production, summed over workspaces.
-      * by_group         — EDP Core / EDP Edge / Forecasting …, summed over
-                           workspaces (naming-convention groups).
+      * by_env_tier      — Dev / Test / Pre-prod / Prod …, from the workspace name.
+      * by_group         — naming-convention groups, summed over workspaces.
     """
     from data import workload as wl
     from data import grouping
@@ -545,8 +545,10 @@ def _overview_lenses() -> dict[str, Any]:
 
     env_spend: dict[str, float] = {}
     grp_spend: dict[str, float] = {}
+    tier_spend: dict[str, float] = {}
     for w in _workspace_records():
         name = w["workspace"]
+        tier_spend[grouping.workspace_tier(name)] = tier_spend.get(grouping.workspace_tier(name), 0.0) + w["spend_usd_month"]
         env_spend[grouping.workspace_environment(name)] = (
             env_spend.get(grouping.workspace_environment(name), 0.0) + w["spend_usd_month"])
         grp_spend[grouping.workspace_group(name)] = (
@@ -563,9 +565,13 @@ def _overview_lenses() -> dict[str, Any]:
         "by_environment": sorted(
             [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in env_spend.items()],
             key=lambda x: -x["spend_usd_month"]),
+        "by_env_tier": sorted(
+            [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in tier_spend.items()],
+            key=lambda x: -x["spend_usd_month"]),
         "by_group": sorted(
             [{"key": k, "spend_usd_month": round(v), "pct": round(v / ws_total, 3)} for k, v in grp_spend.items()],
             key=lambda x: -x["spend_usd_month"]),
+        "workload_basis": "Sample split by cost driver",
     }
 
 
@@ -879,7 +885,7 @@ def _table_records() -> list[dict[str, Any]]:
             reads_30d = rng.choice([0, 0, 0, 4, 12, 40, 180, 900, 2600])
             days_since_read = rng.choice([0, 1, 2, 5, 12]) if reads_30d else rng.choice([34, 61, 96, 141, 210])
             cold = bool((days_since_read > 30 or reads_30d == 0) and size_bytes >= 1e9)
-            # --- usage profile (Chris feedback #6): frequency tier, 6-week read
+            # --- usage profile (customer feedback): frequency tier, 6-week read
             # trend, business-critical flag, and a data watermark / last-update. ---
             if reads_30d == 0 or cold:
                 usage_tier = "Cold"
@@ -941,7 +947,7 @@ def _table_records() -> list[dict[str, Any]]:
                 "reads_30d": reads_30d,
                 "days_since_read": days_since_read,
                 "cold": cold,
-                # usage profile + lifecycle (Chris feedback #6)
+                # usage profile + lifecycle
                 "usage_tier": usage_tier,
                 "usage_trend": usage_trend,
                 "business_critical": business_critical,

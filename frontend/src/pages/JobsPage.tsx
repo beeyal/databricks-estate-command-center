@@ -52,7 +52,7 @@ export function JobsPage() {
   const [workload, setWorkload] = useState<string[]>([]);
   const [why, setWhy] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<string[]>([]);
-  // Deep-link from a workspace ("view this workspace's jobs", Chris #2d): seed the
+  // Deep-link from a workspace ("view this workspace's jobs"): seed the
   // workspace filter from the store once, then clear it.
   const focusJobsWorkspace = useAppStore((s) => s.focusJobsWorkspace);
   const clearFocusJobsWorkspace = useAppStore((s) => s.clearFocusJobsWorkspace);

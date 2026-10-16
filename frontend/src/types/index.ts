@@ -228,7 +228,7 @@ export interface Workspace {
   environment?: string;
 }
 
-// Operational cost lenses (Chris feedback #2a/#2b/#2c/#2e). Each bucket is one
+// Operational cost lenses. Each bucket is one
 // slice; pct is the share of that lens's total. All lenses reconcile to the
 // estate spend total.
 export interface LensBucket {
@@ -541,7 +541,7 @@ export interface TableRow extends AckFields {
   days_since_read?: number;
   cold?: boolean;
   size_snapshot?: string;
-  // Usage profile + lifecycle (Chris feedback #6): frequency tier, 6-week read
+  // Usage profile + lifecycle: frequency tier, 6-week read
   // trend, business-critical flag, and the data watermark / last-update.
   usage_tier?: "Hot" | "Warm" | "Cold" | string;
   usage_trend?: number[];
@@ -650,7 +650,7 @@ export interface JobRow extends AckFields {
   reasons: JobReason[];
   trend: number[];
   detail: JobDetail;
-  // Operational workload type (Chris feedback #5), classified from the job name
+  // Operational workload type, classified from the job name
   // + compute: Batch / Streaming / Interactive / Ad-hoc / ML / AI / Other.
   workload?: string;
 }

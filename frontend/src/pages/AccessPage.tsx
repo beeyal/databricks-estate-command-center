@@ -60,7 +60,7 @@ export function AccessPage() {
       title="Access"
       subtitle="Factual bidirectional grants explorer — who can access a securable, and what a principal can access. No recommendations, just the grant graph."
     >
-      {/* What this tab is for (Chris feedback #3 — the tab wasn't self-explanatory). */}
+      {/* What this tab is for (the tab needs a short explanation of what it is for). */}
       <div className="card bg-surface/40 border-l-4 border-l-accent">
         <h3 className="text-sm font-semibold mb-1">What this tab shows</h3>
         <p className="text-xs text-neutral max-w-4xl">

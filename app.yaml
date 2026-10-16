@@ -147,8 +147,8 @@ env:
 
   # ── Workspace grouping by naming convention (#2a) ───────────────────────────
   # Ordered "PREFIX:Label" rules, ";"-separated; first matching prefix wins
-  # (case-insensitive). BLANK ⇒ the built-in AEMO defaults (DATA-EDP-:EDP Core;
-  # DATA-ANA-:EDP Edge;FORE-:Forecasting). Anything unmatched groups as "Other".
+  # (case-insensitive). BLANK ⇒ grouping is off (the group lens/filter is hidden). e.g.
+  # "DATA-EDP-:EDP Core;DATA-ANA-:EDP Edge;FORE-:Forecasting". Unmatched ⇒ "Other".
   - name: FINOPS_WORKSPACE_GROUPS
     value: ""
 

@@ -727,10 +727,27 @@ def ai_cost_live(warehouse_id: str, workspace: str | None = None) -> dict[str, A
     Degrades gracefully: if the newer product_features sub-structs
     (serverless_gpu / model_serving / app_name) aren't present in this metastore,
     fall back to a struct-free query so the AI tab renders instead of 503-ing."""
-    try:
-        raw = _run(warehouse_id, _AI_SQL, "system.billing.usage (AI)")
-    except LiveError:
-        raw = _run(warehouse_id, _AI_SQL_NOFEATURES, "system.billing.usage (AI, no features)")
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _billing():
+        try:
+            return _run(warehouse_id, _AI_SQL, "system.billing.usage (AI)")
+        except LiveError:
+            return _run(warehouse_id, _AI_SQL_NOFEATURES, "system.billing.usage (AI, no features)")
+
+    warm_auth()
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="ai-live") as pool:
+        f_bill = pool.submit(_billing)
+        f_callers = pool.submit(_run, warehouse_id, _AI_CALLERS_SQL, "system.serving.endpoint_usage")
+        raw = f_bill.result()
+        try:
+            caller_rows = f_callers.result()
+            callers_note = ""
+        except Exception as e:  # noqa: BLE001 — per-caller usage is an optional enrichment
+            caller_rows = []
+            callers_note = ("Per-person usage needs SELECT on system.serving (endpoint_usage + served_entities): "
+                            "GRANT USE SCHEMA, SELECT ON SCHEMA system.serving TO `<app-service-principal>`. "
+                            f"({str(getattr(e, 'detail', e))[:160]})")
     ws_names = _workspace_names(warehouse_id)
     rows: list[dict[str, Any]] = []
     for r in raw:
@@ -755,7 +772,75 @@ def ai_cost_live(warehouse_id: str, workspace: str | None = None) -> dict[str, A
             "scale_to_zero": None,  # not exposed in billing — unknown, so no false flags
         })
     rows.sort(key=lambda r: -r["list_usd_month"])
-    return ai_cost.assemble(rows, workspace, live=True)
+    out = ai_cost.assemble(rows, workspace, live=True)
+    out["callers"] = _ai_callers(rows, caller_rows, ws_names, out.get("workspace"))
+    out["callers_note"] = callers_note
+    return out
+
+
+# Who is CALLING the AI endpoints — system.serving.endpoint_usage records the
+# requester of every request (shared Foundation Model API / pay-per-token
+# endpoints included), which billing's identity_metadata does not: billing
+# attributes a shared endpoint to its owner, so the people actually using it never
+# appeared on the AI tab. Month to date, to match the AI billing window.
+_AI_CALLERS_SQL = """
+SELECT eu.requester, se.endpoint_name, CAST(eu.workspace_id AS STRING) AS ws,
+       COUNT(*) AS requests,
+       SUM(COALESCE(eu.input_token_count, 0) + COALESCE(eu.output_token_count, 0)) AS tokens
+FROM system.serving.endpoint_usage eu
+LEFT JOIN (SELECT served_entity_id, max_by(endpoint_name, change_time) AS endpoint_name
+           FROM system.serving.served_entities GROUP BY 1) se
+  ON eu.served_entity_id = se.served_entity_id
+WHERE eu.request_time >= date_trunc('MONTH', current_date())
+GROUP BY 1, 2, 3
+"""
+
+
+def _ai_callers(bill_rows: list[dict[str, Any]], caller_rows: list[dict[str, Any]],
+                ws_names: dict[str, str], scoped: str | None) -> list[dict[str, Any]]:
+    """Per-requester usage with an ESTIMATED $ share: each endpoint's billed cost
+    (per workspace) is split across its callers by token share (request share
+    for endpoints that report no tokens). Labelled an allocation, not a bill."""
+    cost: dict[tuple[str, str], float] = {}
+    for r in bill_rows:
+        k = (str(r.get("workspace_id") or ""), str(r.get("name") or ""))
+        cost[k] = cost.get(k, 0.0) + float(r.get("list_usd_month") or 0)
+    tot_tok: dict[tuple[str, str], float] = {}
+    tot_req: dict[tuple[str, str], float] = {}
+    for c in caller_rows:
+        k = (str(c.get("ws") or ""), str(c.get("endpoint_name") or ""))
+        tot_tok[k] = tot_tok.get(k, 0.0) + _f(c.get("tokens"))
+        tot_req[k] = tot_req.get(k, 0.0) + _f(c.get("requests"))
+    people: dict[str, dict[str, Any]] = {}
+    for c in caller_rows:
+        ws = str(c.get("ws") or "")
+        wsname = ws_names.get(ws, ws)
+        if scoped and scoped != "all" and wsname != scoped and ws != scoped:
+            continue
+        ep = str(c.get("endpoint_name") or "(unknown endpoint)")
+        k = (ws, ep)
+        tok, req = _f(c.get("tokens")), _f(c.get("requests"))
+        share = (tok / tot_tok[k]) if tot_tok.get(k) else ((req / tot_req[k]) if tot_req.get(k) else 0.0)
+        est = cost.get(k, 0.0) * share
+        who = str(c.get("requester") or "(unknown)")
+        p = people.setdefault(who, {"requester": who, "requests": 0, "tokens": 0, "est_usd_month": 0.0,
+                                    "_eps": {}, "_ws": set()})
+        p["requests"] += int(req)
+        p["tokens"] += int(tok)
+        p["est_usd_month"] += est
+        p["_eps"][ep] = p["_eps"].get(ep, 0.0) + est + tok * 1e-9   # tie-break by volume
+        p["_ws"].add(wsname)
+    out = []
+    for p in people.values():
+        eps = sorted(p.pop("_eps").items(), key=lambda kv: -kv[1])
+        p["endpoints"] = [e for e, _ in eps[:3]]
+        p["num_endpoints"] = len(eps)
+        p["workspaces"] = sorted(p.pop("_ws"))[:3]
+        p["est_usd_month"] = round(p["est_usd_month"], 2)
+        p["is_service_principal"] = bool(re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-", p["requester"]))
+        out.append(p)
+    out.sort(key=lambda p: (-p["est_usd_month"], -p["tokens"]))
+    return out[:300]
 
 
 # ---------------------------------------------------------------------------

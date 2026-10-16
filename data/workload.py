@@ -1,10 +1,10 @@
-"""Workload classification (Chris feedback #2e / #5).
+"""Workload classification.
 
-Chris's operational lens is not the Databricks product view (Jobs / All-Purpose /
+A platform team's operational lens is often not the Databricks product view (Jobs / All-Purpose /
 SQL) but the *workload type*: batch, streaming, interactive / ad-hoc, ML/AI. This
 module maps the signals available from system tables + metadata — the billing
 product/SKU, and job/cluster names + tags — onto those workload buckets, so cost
-can be re-expressed the way AEMO thinks about it.
+can be re-expressed the way a platform team thinks about it.
 
 It is deliberately a transparent heuristic (no model): a keyword/rule map, config-
 overridable, with an honest "Other" fallback for anything it can't place. Two
@@ -66,7 +66,7 @@ _PRODUCT_MAP: dict[str, str] = {
 }
 
 # Job/pipeline NAME keyword → workload (checked in order; first hit wins). Names
-# and tags are the richest operational signal AEMO has.
+# and tags are usually the richest operational signal available.
 _NAME_RULES: list[tuple[str, str]] = [
     (r"stream|kafka|kinesis|cdc|continuous|realtime|real-time|event", STREAMING),
     (r"train|training|ml[-_]|model|forecast|predict|inference|feature[-_]?store|embedding", ML_AI),

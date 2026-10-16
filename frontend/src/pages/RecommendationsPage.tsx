@@ -224,7 +224,7 @@ export function RecommendationsPage() {
       {loading && !data && <LoadingCard />}
       {error && <ErrorCard message={error} />}
 
-      {/* How savings are estimated — the assumptions behind every $ (Chris feedback #2f). */}
+      {/* How savings are estimated — the assumptions behind every $. */}
       <details className="card bg-surface/40 border-l-4 border-l-info text-xs text-neutral">
         <summary className="text-sm font-semibold text-brand-dark cursor-pointer">How these savings are estimated (assumptions)</summary>
         <ul className="mt-2 space-y-1 list-disc pl-5 max-w-4xl">

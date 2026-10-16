@@ -74,7 +74,7 @@ def is_degraded_payload(payload: Any) -> bool:
     instead of raising). Such payloads must never be cached or snapshotted."""
     if not isinstance(payload, dict) or not payload.get("message"):
         return False
-    for k in ("jobs", "warehouses", "clusters"):
+    for k in ("jobs", "pipelines", "warehouses", "clusters"):
         if k in payload:
             return not payload.get(k)
     return False
@@ -91,6 +91,14 @@ def _jobs_live(warehouse_id: str) -> Any:
     """Jobs payload for gold — the app's own jobs.jobs_live (unfiltered)."""
     from data import jobs
     return jobs.jobs_live(warehouse_id)
+
+
+def _lenses_live(warehouse_id: str, gold_schema: str) -> Any:
+    from data import lenses
+    jobs = live.read_gold(warehouse_id, gold_schema, "jobs")
+    pipes = live.read_gold(warehouse_id, gold_schema, "pipelines")
+    return lenses.lenses_live(warehouse_id, (jobs[0] if jobs else {}).get("jobs"),
+                              (pipes[0] if pipes else {}).get("pipelines"))
 
 
 def _hub_live(warehouse_id: str, gold_schema: str = "") -> Any:
@@ -131,6 +139,7 @@ def _payload_builders(warehouse_id: str) -> dict[str, Callable[[], Any]]:
         # UNFILTERED payload (the app applies workspace/priority/status filters
         # in-process over the snapshot, exactly as it does off the runtime cache).
         "jobs": lambda: _jobs_live(warehouse_id),
+        "pipelines": lambda: __import__("data.pipelines", fromlist=["pipelines_live"]).pipelines_live(warehouse_id),
         "governance": lambda: live.governance_live(warehouse_id, _ingest_schema()),
     }
     # NB: Warehouse Monitor + Cluster Efficiency are NOT snapshot payloads here —
@@ -436,6 +445,8 @@ def run_gold(warehouse_id: str, gold_schema: str) -> dict[str, str]:
     # The Recommendations hub aggregates the payloads above, so build it last,
     # reading them back from gold.
     status["hub"] = _build_and_write("hub", lambda: _hub_live(warehouse_id, gold_schema))
+    # Cost lenses use the jobs + pipelines payloads for the workload split.
+    status["lenses"] = _build_and_write("lenses", lambda: _lenses_live(warehouse_id, gold_schema))
 
     try:
         sz = build_table_sizes(warehouse_id, gold_schema)
