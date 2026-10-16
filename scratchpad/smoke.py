@@ -70,14 +70,35 @@ ALWAYS = [
     "/api/workspaces", "/api/jobs", "/api/queries", "/api/warehouses",
     "/api/clusters", "/api/recommendations/hub", "/api/genie-cost",
     "/api/ai-cost", "/api/classification", "/api/adoption", "/api/tables",
-    "/api/governance",
+    "/api/governance", "/api/pipelines", "/api/overview/lenses",
+    # filtered variants that must be served from the cached snapshot (fast) —
+    # these used to rebuild the whole estate on a cold process
+    "/api/recommendations/hub?priority=P1", "/api/jobs?environment=Non-production&schedule=active",
+    "/api/pipelines?why=failing", "/api/queries?time_range=30d",
 ]
 for p in ALWAYS:
     st, body = call("GET", p)
     # 200 always acceptable; 503 acceptable in live (missing grant, fail-soft);
     # anything else (esp 500 / -1) is a failure.
     ok = st == 200 or (st == 503 and mode == "live")
-    check(f"GET {p}", ok, f"status={st}" + ("" if ok else f" body={str(body)[:120]}"))
+    # Payload-shape checks for the newer endpoints (a 200 with the wrong shape is
+    # still a failure — the UI would render blank).
+    if ok and st == 200 and isinstance(body, dict):
+        d = body.get("data")
+        if p.startswith("/api/pipelines"):
+            ok = isinstance(d, list) and "summary" in body and "by_type" in body["summary"]
+        elif p == "/api/overview/lenses":
+            ok = isinstance(d, dict) and all(k in d for k in ("by_workload", "by_compute_type", "by_environment", "by_env_tier"))
+            if ok and mode == "live":
+                tot = lambda k: sum(x["spend_usd_month"] for x in d[k])  # noqa: E731
+                # every lens must reconcile to the same total (±1%)
+                base = tot("by_compute_type") or 1
+                ok = all(abs(tot(k) - base) / base < 0.01 for k in ("by_workload", "by_environment", "by_env_tier"))
+        elif p.startswith("/api/jobs"):
+            ok = isinstance(d, list) and "by_env_tier" in body.get("summary", {}) and "nonprod" in body.get("summary", {})
+        elif p == "/api/ai-cost":
+            ok = isinstance(d, dict) and "callers" in d
+    check(f"GET {p}", ok, f"status={st}" + ("" if ok else f" body={str(body)[:160]}"))
 
 # ---- 3. flag-gated endpoints: 404 iff flag off ----
 def gated(path, flag, method="GET", body=None):

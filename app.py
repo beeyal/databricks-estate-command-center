@@ -552,6 +552,25 @@ _GOLD_MISS_TTL_S = 60.0
 _gold_memo: dict[str, tuple[float, Any]] = {}
 
 
+# Gold snapshots written by an OLDER app version lack fields newer code relies
+# on (e.g. the AI tab's callers, the jobs' schedule/last-run, the hub's
+# bu_of_ws). After an upgrade the nightly job hasn't re-run yet, so treat such a
+# snapshot as a miss — the request then computes fresh (once, then cached)
+# instead of serving a payload the UI can't fully render.
+def _first_row_has(payload: Any, list_key: str | None, field: str) -> bool:
+    rows = payload.get(list_key) if (list_key and isinstance(payload, dict)) else payload
+    if not isinstance(rows, list):
+        return False
+    return not rows or field in rows[0]
+
+
+_GOLD_CURRENT = {
+    "ai-cost": lambda p: isinstance(p, dict) and "callers" in p,
+    "jobs": lambda p: isinstance(p, dict) and _first_row_has(p, "jobs", "last_run"),
+    "hub": lambda p: isinstance(p, dict) and "bu_of_ws" in p,
+}
+
+
 def _read_gold_memo(key: str):
     import time
     from data import live
@@ -567,6 +586,8 @@ def _read_gold_memo(key: str):
     # the request computes fresh instead of serving yesterday's error all day.
     if val is not None and _is_degraded(val[0]):
         val = None
+    if val is not None and key in _GOLD_CURRENT and not _GOLD_CURRENT[key](val[0]):
+        val = None   # written by an older version — compute fresh until the next gold run
     _gold_memo[key] = (time.monotonic(), val)
     return val
 
