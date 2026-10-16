@@ -212,6 +212,13 @@ export interface Workspace {
   // modeled estimates (spend × headroom %), not captured $. Drives the honest
   // "Est. recoverable" labelling in the workspace drill-down.
   savings_estimated?: boolean;
+  // Abnormal-cost-movement flags (customer feedback #4). Set by the backend from
+  // the weekly trend: anomaly=true when the latest week breaks materially + notably
+  // above the workspace's own recent average. Drives the exception surfacing.
+  anomaly?: boolean;
+  anomaly_pct?: number;         // signed latest-vs-baseline deviation (0.38 = +38%)
+  anomaly_severity?: "warning" | "critical" | "";
+  anomaly_note?: string;        // plain-English explanation for the tooltip
 }
 
 export interface ProductMixSlice {

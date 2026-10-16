@@ -138,6 +138,14 @@ def _round(x: float, n: int = 0) -> float:
 # Workspaces
 # ---------------------------------------------------------------------------
 
+# Latest-week spike multipliers for the demo abnormal-cost-movement flags
+# (feedback #4). One clear critical spike + one warning-level move.
+_WS_LASTWEEK_SPIKE: dict[str, float] = {
+    "acme-datascience-sandbox": 1.9,   # ← sharp spike → critical exception
+    "acme-energy-markets": 1.33,       # ← moderate deviation → warning
+}
+
+
 @lru_cache(maxsize=1)
 def _workspace_records() -> list[dict[str, Any]]:
     rng = _rng()
@@ -157,6 +165,13 @@ def _workspace_records() -> list[dict[str, Any]]:
         for w in range(12):
             drift = 1 + rng.uniform(-0.08, 0.06) + (0.01 * w if health == "Critical" else -0.004 * w)
             trend.append(round(base * drift))
+        # Inject a deterministic latest-week spike into a couple of workspaces so the
+        # abnormal-cost-movement detection (app._annotate_ws_anomalies, feedback #4)
+        # has something real to surface in the demo. Keyed on name so it's stable and
+        # reconciles with every other page. Factor multiplies the final week only.
+        _spike = _WS_LASTWEEK_SPIKE.get(name)
+        if _spike:
+            trend[-1] = round(trend[-1] * _spike)
         dbus = round(spend / rng.uniform(0.42, 0.68))
         out.append({
             "workspace_id": f"{3120000000000000 + i * 7013:d}",

@@ -1061,6 +1061,55 @@ def get_securable_access(fqn: str = Query(...)) -> dict[str, Any]:
 # API — workspaces
 # ---------------------------------------------------------------------------
 
+def _annotate_ws_anomalies(rows: list[dict[str, Any]]) -> None:
+    """Passive abnormal-cost-movement detection (customer feedback #4).
+
+    Flags workspaces whose most recent week breaks materially from their own
+    recent trend, so an unusual spike surfaces without any manual alerting. The
+    signal is deliberately simple + explainable (no model): compare the latest
+    weekly point to the mean/σ of the preceding weeks in the ``trend`` sparkline
+    each workspace already carries (demo + live both populate it).
+
+      deviation% = (latest − baseline_mean) / baseline_mean
+      z          = (latest − baseline_mean) / baseline_std
+
+    A workspace is flagged only on an UP move (cost control cares about spikes)
+    that is BOTH material (≥25%) AND statistically notable (z≥1.5), so normal
+    week-to-week noise on a stable workspace doesn't trip it. Mutates rows in
+    place, adding: anomaly(bool), anomaly_pct(signed float), anomaly_severity
+    ("warning"|"critical"|""), anomaly_note(str)."""
+    for r in rows:
+        trend = [float(x) for x in (r.get("trend") or []) if x is not None]
+        r["anomaly"] = False
+        r["anomaly_pct"] = 0.0
+        r["anomaly_severity"] = ""
+        r["anomaly_note"] = ""
+        if len(trend) < 5:
+            continue
+        baseline = trend[:-1]
+        latest = trend[-1]
+        n = len(baseline)
+        mean = sum(baseline) / n
+        if mean <= 0:
+            continue
+        var = sum((x - mean) ** 2 for x in baseline) / n
+        std = var ** 0.5
+        dev = (latest - mean) / mean
+        z = (latest - mean) / std if std > 0 else 0.0
+        r["anomaly_pct"] = round(dev, 3)
+        if dev >= 0.25 and z >= 1.5:
+            # Severity is driven by the size of the move (deviation), not σ: on a very
+            # stable workspace σ is tiny so even a modest move is many σ — σ is the
+            # gate for *flagging*, deviation is the gate for *severity*.
+            severity = "critical" if dev >= 0.5 else "warning"
+            r["anomaly"] = True
+            r["anomaly_severity"] = severity
+            r["anomaly_note"] = (
+                f"Latest week {'+' if dev >= 0 else ''}{round(dev * 100)}% vs its "
+                f"{n}-week average (~{z:.1f}σ) — unusual movement worth checking."
+            )
+
+
 @app.get("/api/workspaces")
 def get_workspaces(
     complexity: str = Query("all"),
@@ -1074,6 +1123,9 @@ def get_workspaces(
     else:
         rows = demo.get_workspaces()
         live_source = False
+    # Annotate abnormal cost-movement flags before filtering so the exception
+    # signal is present regardless of the complexity/health/search narrowing.
+    _annotate_ws_anomalies(rows)
     cx = _multi(complexity); hl = _multi(health)
     if cx:
         rows = [r for r in rows if r["complexity"] in cx]

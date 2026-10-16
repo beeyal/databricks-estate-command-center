@@ -68,7 +68,18 @@ export function WorkspacesPage() {
 
   const columns: Column<Workspace>[] = [
     { key: "workspace", header: "Workspace", sortValue: (r) => r.workspace, render: (r) => (
-      <div className="font-medium truncate max-w-[240px]" title={r.workspace}>{r.workspace}</div>
+      <div className="flex items-center gap-1.5 max-w-[260px]">
+        {r.anomaly && (
+          <span
+            title={r.anomaly_note}
+            className={`shrink-0 text-[13px] leading-none ${r.anomaly_severity === "critical" ? "text-danger" : "text-warning"}`}
+            aria-label={`Abnormal cost movement: ${r.anomaly_note ?? ""}`}
+          >
+            ▲
+          </span>
+        )}
+        <span className="font-medium truncate" title={r.workspace}>{r.workspace}</span>
+      </div>
     ) },
     { key: "workspace_id", header: "Workspace ID", sortValue: (r) => r.workspace_id, render: (r) => (
       r.workspace_id && r.workspace_id !== r.workspace
@@ -81,6 +92,11 @@ export function WorkspacesPage() {
     { key: "automated", header: (<span className="inline-flex items-center gap-1">Automation %<InfoTip text="Share of this workspace's DBUs that run on AUTOMATED compute — scheduled Jobs + DLT/Lakeflow pipelines — vs interactive/all-purpose/SQL. Higher = more of the workload is productionised (typically cheaper + more predictable); low automation is common for exploratory/data-science workspaces and isn't inherently bad." /></span>), sortValue: (r) => r.automated_pct, render: (r) => <ProgressBar value={r.automated_pct} tone="info" /> },
     { key: "complexity", header: "Complexity", align: "center", sortValue: (r) => r.complexity, render: (r) => <Pill className="bg-border/60 text-neutral">{r.complexity}</Pill> },
     { key: "trend", header: (<span className="inline-flex items-center gap-1">Trend<InfoTip text="Weekly spend sparkline. Colour shows direction: red = spend trending up, green = trending down, grey = flat." /></span>), align: "center", sortValue: (r) => (r.trend?.length ? r.trend[r.trend.length - 1] : 0), render: (r) => <Sparkline data={r.trend} /> },
+    { key: "movement", header: (<span className="inline-flex items-center gap-1">Movement<InfoTip text="Abnormal cost movement: the latest week vs this workspace's own recent average. A workspace is flagged only when the latest week is both materially higher (≥25%) and statistically unusual (≥1.5σ) for that workspace — a passive exception signal, not manual alerting. Sort this column to surface spikes." /></span>), align: "right", sortValue: (r) => (r.anomaly ? (r.anomaly_pct ?? 0) + 100 : (r.anomaly_pct ?? 0)), render: (r) => (
+      r.anomaly
+        ? <Pill className={r.anomaly_severity === "critical" ? "bg-danger/15 text-danger" : "bg-warning/15 text-warning"} >▲ +{Math.round((r.anomaly_pct ?? 0) * 100)}%</Pill>
+        : <span className="text-xs text-neutral">—</span>
+    ) },
   ];
 
   return (
@@ -130,6 +146,22 @@ export function WorkspacesPage() {
                 ]} allLabel="All" />
                 <SearchBox value={search} onChange={setSearch} placeholder={buEnabled ? "Search workspace or BU…" : "Search workspace…"} />
               </FilterBar>
+
+              {(() => {
+                const flagged = rows.filter((r) => r.anomaly);
+                if (!flagged.length) return null;
+                const crit = flagged.filter((r) => r.anomaly_severity === "critical").length;
+                return (
+                  <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[13px] text-brand-dark flex items-start gap-2 -mt-1">
+                    <span className="text-warning" aria-hidden>▲</span>
+                    <span>
+                      <span className="font-semibold text-warning">{flagged.length} workspace{flagged.length > 1 ? "s" : ""} flagged for abnormal cost movement</span>
+                      {crit > 0 && <> ({crit} critical)</>} — the latest week broke materially from their own recent trend.{" "}
+                      Sort by <span className="font-medium">Movement</span> to surface them.
+                    </span>
+                  </div>
+                );
+              })()}
 
               <div className="text-xs text-neutral -mt-1">
                 Automation = share of DBUs on scheduled Jobs + DLT (vs interactive/all-purpose/SQL): High ≥60% · Medium 25–60% · Low &lt;25%. Low isn't a fault — it's common for exploratory workspaces. Click a row to drill into cost-by-driver, SKU breakdown &amp; DBU-by-SKU.
