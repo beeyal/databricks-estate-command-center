@@ -1916,6 +1916,18 @@ def _gold_table_sizes(warehouse_id: str) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _tables_limit() -> int:
+    """How many tables the Tables tab reads (most-read first). Was a hard 200,
+    which made a real estate look like a handful of tables. Default 25,000;
+    FINOPS_TABLES_LIMIT overrides. The page itself shows the top 500 with a
+    'Load all' button, so the browser isn't handed tens of thousands of rows."""
+    import os
+    try:
+        return max(100, min(int(os.environ.get("FINOPS_TABLES_LIMIT") or 25000), 200000))
+    except ValueError:
+        return 25000
+
+
 def tables_live(warehouse_id: str) -> list[dict[str, Any]]:
     """Live Tables list + health WITHOUT scanning every table. Ranks tables by
     real usage (access.table_lineage) and joins freshness (information_schema) —
@@ -1942,7 +1954,7 @@ def tables_live(warehouse_id: str) -> list[dict[str, Any]]:
         "  WHERE table_schema<>'information_schema' AND table_catalog NOT IN ('system','samples')) "
         "SELECT tbl.fqn, u.reads, u.days_since_read, tbl.c, tbl.s, tbl.t, tbl.tt, tbl.age "
         "FROM tbl LEFT JOIN u ON tbl.fqn=u.fqn "
-        "ORDER BY u.reads DESC NULLS LAST, tbl.age ASC LIMIT 200",
+        f"ORDER BY u.reads DESC NULLS LAST, tbl.age ASC LIMIT {_tables_limit()}",
         "system.information_schema.tables + lineage")
 
     # DQM is intentionally NOT folded into Tables health — Data Quality has its

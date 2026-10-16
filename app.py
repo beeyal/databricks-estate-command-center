@@ -2411,6 +2411,7 @@ def get_tables(
     needs_action: str = Query("all"),
     search: str = Query(""),
     status: str = Query("open"),    # open | acknowledged | wont_fix | in_progress | all (writeback)
+    limit: int = Query(500),        # list cap; 0 = all ("Load all"). Summary covers every match.
 ) -> dict[str, Any]:
     if USE_LIVE:
         from data import live
@@ -2419,6 +2420,9 @@ def get_tables(
     else:
         rows = [dict(r, **{"health": _table_health(r)[0], "health_reason": _table_health(r)[1]}) for r in demo.get_tables()]
         live_source = False
+    # Every catalog in the (unfiltered) estate, for the filter dropdown — the
+    # shipped list is capped, so the UI can't derive the options from rows.
+    all_catalogs = sorted({str(r.get("catalog")) for r in rows if r.get("catalog")})
     tt = _multi(table_type); cat = _multi(catalog); rec = _multi(recommendation)
     if tt:
         rows = [r for r in rows if r["table_type"] in tt]
@@ -2451,8 +2455,17 @@ def get_tables(
         rows, source="table", key_of=lambda r: r.get("fqn", ""),
         metric_field="size_gb", status_filter=status, acks=acks, counts_sink=ack_sink,
     )
+    capped = None
+    if limit and len(rows) > limit:
+        # Keep the most relevant first: rows needing action, then largest.
+        rows = sorted(rows, key=lambda r: (not r.get("needs_action"), -float(r.get("size_gb") or 0)))
+        capped = {"shown": limit, "total": len(rows)}
+        rows = rows[:limit]
     payload = _wrap(rows, live_source=live_source)
     payload["summary"] = summary
+    payload["catalogs"] = all_catalogs
+    if capped:
+        payload["list_capped"] = capped
     if ack_sink is not None:
         payload["ack_counts"] = ack_sink
     return payload

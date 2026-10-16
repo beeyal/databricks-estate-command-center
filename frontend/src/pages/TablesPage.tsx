@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchTables } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import { PageShell, LoadingCard, ErrorCard } from "../components/layout/PageShell";
@@ -36,23 +36,30 @@ export function TablesPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("open");
   const [ackNonce, setAckNonce] = useState(0);
+  // The list is capped (most action-worthy first) so a large estate doesn't ship
+  // tens of thousands of rows; "Load all" lifts it. Filter changes reset it.
+  const [showAll, setShowAll] = useState(false);
   const { data, loading, error } = useApi(
     () => fetchTables({
       table_type: tableType.length ? tableType.join(",") : "all",
       catalog: catalog.length ? catalog.join(",") : "all",
       needs_action: needsAction,
       search,
+      limit: showAll ? "0" : "500",
       ...(features.writeback ? { status } : {}),
     }),
-    [tableType.join(","), catalog.join(","), needsAction, search, status, ackNonce],
+    [tableType.join(","), catalog.join(","), needsAction, search, status, ackNonce, showAll],
   );
+  useEffect(() => { setShowAll(false); }, [tableType.join(","), catalog.join(","), needsAction, search, status]);
+  const capped = data?.list_capped;
 
   // Catalog filter options — derived from the tab's OWN rows (unfiltered fetch),
   // not a hardcoded demo catalog list (which never matched a customer's real
   // catalog names in live). Stable across other filter changes.
   const { data: allTables } = useApi(() => fetchTables({}), []);
   const catalogOptions = useMemo(() => {
-    const set = new Set((allTables?.data ?? []).map((r) => r.catalog).filter(Boolean));
+    const fromServer = (allTables as { catalogs?: string[] } | null)?.catalogs;
+    const set = new Set(fromServer ?? (allTables?.data ?? []).map((r) => r.catalog).filter(Boolean));
     return Array.from(set)
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }))
       .map((c) => ({ value: c, label: c }));
@@ -353,6 +360,23 @@ export function TablesPage() {
       {loading && !data && <LoadingCard />}
       {error && <ErrorCard message={error} />}
       {data && (
+        <>
+        {capped && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-neutral">
+            <span>
+              Showing <span className="font-medium text-brand-dark">{capped.shown.toLocaleString("en-AU")}</span> of{" "}
+              <span className="font-medium text-brand-dark">{capped.total.toLocaleString("en-AU")}</span> matching tables (needing action first, then largest). The KPIs above cover all of them.
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowAll(true)}
+              disabled={loading}
+              className="pill px-2.5 py-1 border border-border text-neutral hover:text-brand-dark hover:bg-surface focus-visible:ring-2 focus-visible:ring-accent/60 focus:outline-none disabled:opacity-50"
+            >
+              {loading ? "Loading…" : `Load all ${capped.total.toLocaleString("en-AU")}`}
+            </button>
+          </div>
+        )}
         <DataTable
           columns={columns}
           updating={loading && !!data}
@@ -370,6 +394,7 @@ export function TablesPage() {
             status, onStatusChange: setStatus, statusCounts: data?.ack_counts,
           } : undefined}
         />
+        </>
       )}
     </PageShell>
   );

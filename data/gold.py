@@ -171,6 +171,16 @@ def _ensure_managed_delta(warehouse_id: str, fqn: str, cols: str) -> None:
         pass
 
 
+def _add_missing_columns(warehouse_id: str, fqn: str, cols: list[str]) -> None:
+    """Best-effort ALTER TABLE ADD COLUMN for columns added in later versions
+    (an "already exists" error is a harmless no-op)."""
+    for col in cols:
+        try:
+            live._run(warehouse_id, f"ALTER TABLE {fqn} ADD COLUMN {col}", f"add {col} to {fqn}")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Table-size census (the piece with no system table — R3). Iterate
 # information_schema.tables, DESCRIBE DETAIL each (metadata-only, no data scan),
@@ -314,7 +324,8 @@ def build_warehouse_daily(warehouse_id: str, gold_schema: str) -> dict[str, Any]
         f"DELETE FROM {fqn} WHERE usage_date >= dateadd(day,-{_ACCUM_REFRESH_DAYS},current_date())",
         "clear warehouse_daily window")
     live._run(warehouse_id,
-        f"INSERT INTO {fqn} "
+        f"INSERT INTO {fqn} (usage_date, warehouse_id, workspace_id, runs, duration_ms, queued_ms, "
+        "spilled_bytes, read_bytes, distinct_users, cost_proxy) "
         "SELECT CAST(start_time AS DATE) usage_date, compute.warehouse_id, "
         "CAST(workspace_id AS STRING) workspace_id, COUNT(*) runs, "
         "SUM(total_duration_ms) duration_ms, SUM(waiting_at_capacity_duration_ms) queued_ms, "
@@ -342,6 +353,10 @@ def build_cluster_daily(warehouse_id: str, gold_schema: str) -> dict[str, Any]:
     _ensure_managed_delta(warehouse_id, fqn,
         "usage_date DATE, cluster_id STRING, cpu_sum DOUBLE, mem_sum DOUBLE, "
         "idle_samples BIGINT, samples BIGINT, uptime_min BIGINT, dbus DOUBLE")
+    # Tables created by an older version predate uptime_min — CREATE IF NOT
+    # EXISTS never adds it, so the INSERT below failed on every run after an
+    # upgrade. Add it (no-op if present) and name the columns explicitly.
+    _add_missing_columns(warehouse_id, fqn, ["uptime_min BIGINT"])
     live._run(warehouse_id,
         f"DELETE FROM {fqn} WHERE usage_date >= dateadd(day,-{_ACCUM_REFRESH_DAYS},current_date())",
         "clear cluster_daily window")
@@ -351,7 +366,7 @@ def build_cluster_daily(warehouse_id: str, gold_schema: str) -> dict[str, Any]:
     # uptime — one node_timeline row per node per minute, so COUNT(*) overcounts
     # multi-node clusters; the reader sums uptime_min across days).
     live._run(warehouse_id,
-        f"INSERT INTO {fqn} "
+        f"INSERT INTO {fqn} (usage_date, cluster_id, cpu_sum, mem_sum, idle_samples, samples, uptime_min, dbus) "
         "SELECT CAST(nt.start_time AS DATE) usage_date, nt.cluster_id, "
         "SUM(nt.cpu_user_percent+nt.cpu_system_percent)/100.0 cpu_sum, "
         "SUM(nt.mem_used_percent)/100.0 mem_sum, "
