@@ -305,7 +305,7 @@ def pipelines_live(warehouse_id: str) -> dict[str, Any]:
 
 _DEMO_WORKSPACES = [
     "DATA-EDP-PLATFORM-PROD", "DATA-EDP-MARKETS-PROD", "DATA-EDP-METERING-PROD",
-    "DATA-ANA-ASSET-PROD", "DATA-ANA-SCADA-NONPROD", "FORE-DATASCIENCE-DEV",
+    "DATA-ANA-ASSET-PROD", "DATA-ANA-ASSET-PPD", "FORE-DATASCIENCE-DEV",
 ]
 _DEMO_NAMES = [
     ("bronze_meter_reads_ingest", "ETL_PIPELINE"), ("silver_nem12_intervals", "ETL_PIPELINE"),

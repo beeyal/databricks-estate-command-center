@@ -1147,11 +1147,10 @@ def _annotate_ws_grouping(rows: list[dict[str, Any]]) -> None:
     place adding ``group`` (e.g. "EDP Core") and ``environment`` (Production /
     Non-production)."""
     from data import grouping
+    mapping = _ws_mapping()
     for r in rows:
         name = r.get("workspace") or r.get("workspace_name") or ""
-        r["group"] = grouping.workspace_group(name)
-        r["environment"] = grouping.workspace_environment(name)
-        r["env_tier"] = grouping.workspace_tier(name)
+        r.update(grouping.classify(name, mapping.get(str(r.get("workspace_id") or ""))))
 
 
 @app.get("/api/workspaces")
@@ -1162,6 +1161,7 @@ def get_workspaces(
     group: str = Query("all"),
     environment: str = Query("all"),
     env_tier: str = Query("all"),
+    platform: str = Query("all"),
 ) -> dict[str, Any]:
     if USE_LIVE:
         from data import live
@@ -1175,21 +1175,32 @@ def get_workspaces(
     _annotate_ws_anomalies(rows)
     _annotate_ws_grouping(rows)
     cx = _multi(complexity); hl = _multi(health)
-    grp = _multi(group); env = _multi(environment); trf = _multi(env_tier)
-    if trf:
-        rows = [r for r in rows if r.get("env_tier") in trf]
+    grp = _multi(group); env = _multi(environment); trf = _multi(env_tier); plf = _multi(platform)
     if grp:
         rows = [r for r in rows if r.get("group") in grp]
-    if env:
-        rows = [r for r in rows if r.get("environment") in env]
     if cx:
         rows = [r for r in rows if r["complexity"] in cx]
     if hl:
         rows = [r for r in rows if r["health"] in hl]
     if search:
         s = search.lower()
-        rows = [r for r in rows if s in r["workspace"].lower() or s in r["bu"].lower()]
-    return _wrap(rows, live_source=live_source)
+        rows = [r for r in rows if s in r["workspace"].lower() or s in r["bu"].lower()
+                or s in str(r.get("platform", "")).lower()]
+    # Platform × environment matrix before the platform / environment filters,
+    # so it stays a navigator.
+    matrix = _platform_env_matrix(rows, cost_key="spend_usd_month")
+    bu_matrix = _bu_matrix(rows, cost_key="spend_usd_month")
+    if plf:
+        rows = [r for r in rows if _platform_match(r, plf)]
+    if trf:
+        rows = [r for r in rows if r.get("env_tier") in trf]
+    if env:
+        rows = [r for r in rows if r.get("environment") in env]
+    out = _wrap(rows, live_source=live_source)
+    out["platform_matrix"] = matrix
+    if bu_matrix:
+        out["bu_matrix"] = bu_matrix
+    return out
 
 
 @app.get("/api/workspaces/options")
@@ -1256,6 +1267,7 @@ def get_jobs(
     environment: str = Query("all"),  # Production | Non-production (from the workspace name)
     env_tier: str = Query("all"),     # Dev | Test | Pre-prod | Sandbox | Non-prod | Prod | Unclassified
     schedule: str = Query("all"),     # all | active (scheduled + not paused) | paused | manual
+    platform: str = Query("all"),     # platform = workspace name minus its environment word (case-insensitive)
     bu: str = Query("all"),         # business unit (or "all") — from the workspace->BU mapping
     time_range: str = Query("30d"), # run window: 30d | 7d | 24h
     search: str = Query(""),
@@ -1313,17 +1325,7 @@ def get_jobs(
         r["workload"] = _wl.classify_job(r.get("job_name", ""), r.get("compute_type"))
 
     ct = _multi(compute_type); ws = _multi(workspace); wy = _multi(why); bus = _multi(bu); wlf = _multi(workload)
-    enf = _multi(environment); trf = _multi(env_tier)
-    if enf:
-        rows = [r for r in rows if r.get("environment") in enf]
-    if trf:
-        rows = [r for r in rows if r.get("env_tier") in trf]
-    if schedule == "active":
-        rows = [r for r in rows if r.get("schedule_active")]
-    elif schedule == "paused":
-        rows = [r for r in rows if r.get("paused") is True]
-    elif schedule == "manual":
-        rows = [r for r in rows if not r.get("schedule_active") and r.get("paused") is not True]
+    enf = _multi(environment); trf = _multi(env_tier); plf = _multi(platform)
     if ct:
         rows = [r for r in rows if r["compute_type"] in ct]
     if wlf:
@@ -1336,19 +1338,41 @@ def get_jobs(
         rows = [r for r in rows if any(w in r["reasons"] for w in wy)]
     if search:
         s = search.lower()
-        rows = [r for r in rows if s in r["job_name"].lower() or s in r["workspace"].lower()]
+        rows = [r for r in rows if s in r["job_name"].lower() or s in r["workspace"].lower()
+                or s in str(r.get("platform", "")).lower() or s in str(r.get("owner", "")).lower()]
 
-    # Acknowledge/ignore overlay (writeback). Default 'open' hides acked jobs
-    # (matching Recommendations + the other alert tabs); the status filter lets a
-    # user view acknowledged/won't-fix/in-progress. entity_key = workspace_id:
-    # job_id; magnitude = cost_usd_month (your 'expected growth' example keys
-    # here). No-op when off.
+    # Platform × environment matrix — computed BEFORE the platform / environment /
+    # tier / schedule filters so it stays a navigator (clicking a cell filters the
+    # table; the matrix doesn't collapse to that one cell). Also the non-prod
+    # call-out, for the same reason ("Show them" must not hide itself).
+    matrix = _platform_env_matrix(rows, cost_key="cost_usd_month", scheduled=True)
+    bu_matrix = _bu_matrix(rows, cost_key="cost_usd_month", scheduled=True)
+    _np = [r for r in rows if r.get("environment") == "Non-production"]
+    nonprod = {
+        "num_jobs": len(_np),
+        "num_scheduled": sum(1 for r in _np if r.get("schedule_active")),
+        "cost_usd_month": round(sum(float(r.get("cost_usd_month") or 0) for r in _np), 2),
+        "scheduled_cost_usd_month": round(sum(float(r.get("cost_usd_month") or 0) for r in _np if r.get("schedule_active")), 2),
+    }
+
+    if plf:
+        rows = [r for r in rows if _platform_match(r, plf)]
+    if enf:
+        rows = [r for r in rows if r.get("environment") in enf]
+    if trf:
+        rows = [r for r in rows if r.get("env_tier") in trf]
+    if schedule == "active":
+        rows = [r for r in rows if r.get("schedule_active")]
+    elif schedule == "paused":
+        rows = [r for r in rows if r.get("paused") is True]
+    elif schedule == "manual":
+        rows = [r for r in rows if not r.get("schedule_active") and r.get("paused") is not True]
+
     # KPI summary is computed BEFORE the ack status-filter, so acknowledging a
     # job (triage) doesn't shrink the estate cost totals — Jobs is a facts view.
     # Only the visible LIST is status-filtered.
     summary = jobs.summarize(rows)
-    # Workload roll-up: jobs + cost by workload type, so the
-    # Jobs view is actionable by batch/streaming/etc. rather than one flat list.
+    # Workload roll-up: jobs + cost by workload type.
     _wl_roll: dict[str, dict[str, Any]] = {}
     for r in rows:
         b = _wl_roll.setdefault(r.get("workload", "Other"), {"workload": r.get("workload", "Other"), "num_jobs": 0, "cost_usd_month": 0.0})
@@ -1357,9 +1381,7 @@ def get_jobs(
     for b in _wl_roll.values():
         b["cost_usd_month"] = round(b["cost_usd_month"], 2)
     summary["by_workload"] = sorted(_wl_roll.values(), key=lambda x: -x["cost_usd_month"])
-    # Activity by environment tier — the DEV / TEST / PRE-PROD clean-up view: how
-    # many jobs ran in each tier, how many are still on an active schedule, and
-    # what they cost. Over the filtered set (before the ack/status overlay).
+    # Per-tier roll-up over the visible (filtered) jobs.
     _tiers: dict[str, dict[str, Any]] = {}
     for r in rows:
         t = _tiers.setdefault(r.get("env_tier") or "Unclassified", {
@@ -1371,15 +1393,11 @@ def get_jobs(
         t["runs"] += int(r.get("runs") or 0)
     for t in _tiers.values():
         t["cost_usd_month"] = round(t["cost_usd_month"], 2)
-    _order = {"Dev": 0, "Test": 1, "Pre-prod": 2, "Sandbox": 3, "Non-prod": 4, "Prod": 5, "Unclassified": 6}
-    summary["by_env_tier"] = sorted(_tiers.values(), key=lambda x: _order.get(x["env_tier"], 9))
-    _np = [r for r in rows if r.get("environment") == "Non-production"]
-    summary["nonprod"] = {
-        "num_jobs": len(_np),
-        "num_scheduled": sum(1 for r in _np if r.get("schedule_active")),
-        "cost_usd_month": round(sum(float(r.get("cost_usd_month") or 0) for r in _np), 2),
-        "scheduled_cost_usd_month": round(sum(float(r.get("cost_usd_month") or 0) for r in _np if r.get("schedule_active")), 2),
-    }
+    summary["by_env_tier"] = sorted(_tiers.values(), key=lambda x: _TIER_ORDER.get(x["env_tier"], 9))
+    summary["nonprod"] = nonprod
+    summary["platform_matrix"] = matrix
+    if bu_matrix:
+        summary["bu_matrix"] = bu_matrix
     acks = _acks_for("job")
     ack_sink = _new_counts_sink(acks)
     rows = _apply_acks(
@@ -1423,15 +1441,118 @@ def _annotate_env(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     naming-convention group, from data/grouping.py. Copies so the shared cached /
     gold payload rows are never mutated across concurrent requests."""
     from data import grouping
+    mapping = _ws_mapping()
     out = []
     for r in rows:
         r = dict(r)
-        name = str(r.get("workspace") or "")
-        r["env_tier"] = grouping.workspace_tier(name)
-        r["environment"] = grouping.workspace_environment(name)
-        r["group"] = grouping.workspace_group(name)
+        m = mapping.get(str(r.get("workspace_id") or ""))
+        r.update(grouping.classify(str(r.get("workspace") or ""), m))
+        # BU applied at request time too, so editing the mapping table shows up
+        # within minutes (was baked into the nightly snapshot until the next run).
+        if m and m.get("bu"):
+            r["bu"] = m["bu"]
         out.append(r)
     return out
+
+
+def _ws_mapping() -> dict[str, dict[str, str]]:
+    """workspace_id -> {bu, owner, platform, environment} from the optional
+    customer mapping table (live only; memoised in live._workspace_bu). Its
+    platform / environment columns override what the names imply."""
+    if not USE_LIVE:
+        return {}
+    try:
+        from data import live
+        return live._workspace_bu(WAREHOUSE_ID)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+_TIER_ORDER = {"Dev": 0, "Test": 1, "Pre-prod": 2, "Sandbox": 3, "Non-prod": 4, "Prod": 5, "Unclassified": 6}
+
+
+def _platform_match(row: dict[str, Any], sel: set[str]) -> bool:
+    """Platform filter, case-insensitive (``Forecasting`` and ``forecasting`` are
+    the same platform even if workspaces were named inconsistently)."""
+    p = str(row.get("platform") or "").lower()
+    return any(p == x.lower() for x in sel)
+
+
+def _platform_env_matrix(rows: list[dict[str, Any]], cost_key: str, scheduled: bool = False,
+                         count_key: str = "count", row_key: str = "platform") -> dict[str, Any]:
+    """Platform (rows) × environment tier (columns) roll-up for the "pick a
+    platform, see its Dev / Test / Pre-prod / Prod" view. Each cell: cost, number
+    of items (jobs or workspaces), number of workspaces, and — for jobs — how many
+    are on an active schedule. Platforms are grouped case-insensitively; sorted by
+    non-production cost (the clean-up lens), then total. Only platforms spanning
+    2+ tiers or carrying non-prod cost are flagged ``multi_env``."""
+    plats: dict[str, dict[str, Any]] = {}
+    tiers_present: set[str] = set()
+    for r in rows:
+        label = str(r.get(row_key) or "").strip()
+        if not label or label == "—":
+            label = "Unmapped" if row_key == "bu" else str(r.get("workspace") or "—")
+        key = label.lower()
+        tier = r.get("env_tier") or "Unclassified"
+        tiers_present.add(tier)
+        p = plats.setdefault(key, {"platform": label, "cells": {}, "total_cost": 0.0, "nonprod_cost": 0.0,
+                                   "nonprod_scheduled": 0, count_key: 0, "_ws": set()})
+        c = p["cells"].setdefault(tier, {"cost": 0.0, count_key: 0, "scheduled": 0, "_ws": set()})
+        cost = float(r.get(cost_key) or 0)
+        c["cost"] += cost
+        c[count_key] += 1
+        c["_ws"].add(str(r.get("workspace") or ""))
+        p["_ws"].add(str(r.get("workspace") or ""))
+        p["total_cost"] += cost
+        p[count_key] += 1
+        nonprod = r.get("environment") == "Non-production"
+        if scheduled and r.get("schedule_active"):
+            c["scheduled"] += 1
+            if nonprod:
+                p["nonprod_scheduled"] += 1
+        if nonprod:
+            p["nonprod_cost"] += cost
+    out_rows = []
+    for p in plats.values():
+        for c in p["cells"].values():
+            c["num_workspaces"] = len(c.pop("_ws"))
+            c["cost"] = round(c["cost"], 2)
+        p["workspaces"] = sorted(w for w in p.pop("_ws") if w)
+        p["num_workspaces"] = len(p["workspaces"])
+        p["total_cost"] = round(p["total_cost"], 2)
+        p["nonprod_cost"] = round(p["nonprod_cost"], 2)
+        p["multi_env"] = len(p["cells"]) > 1
+        out_rows.append(p)
+    out_rows.sort(key=lambda p: (-p["nonprod_cost"], -p["total_cost"]))
+    tiers = sorted(tiers_present, key=lambda t: _TIER_ORDER.get(t, 9))
+    totals = {t: round(sum(p["cells"].get(t, {}).get("cost", 0.0) for p in out_rows), 2) for t in tiers}
+    # Coverage: how the environment / platform were worked out, by share of cost —
+    # so the page can say plainly how much rests on naming conventions alone.
+    total_cost = sum(float(r.get(cost_key) or 0) for r in rows) or 0.0
+
+    def _share(field: str, value: str) -> float:
+        if total_cost <= 0:
+            return 0.0
+        return round(sum(float(r.get(cost_key) or 0) for r in rows if r.get(field) == value) / total_cost, 3)
+
+    coverage = {
+        "env_unclassified": _share("env_source", "none"),
+        "env_from_mapping": _share("env_source", "mapping"),
+        "env_from_name": _share("env_source", "name"),
+        "platform_from_mapping": _share("platform_source", "mapping"),
+        "platform_from_rule": _share("platform_source", "rule"),
+        "platform_from_name": _share("platform_source", "name"),
+    }
+    return {"row_key": row_key, "tiers": tiers, "rows": out_rows, "tier_totals": totals,
+            "num_platforms": len(out_rows), "num_multi_env": sum(1 for p in out_rows if p["multi_env"]),
+            "coverage": coverage}
+
+
+def _bu_matrix(rows: list[dict[str, Any]], cost_key: str, scheduled: bool = False) -> dict[str, Any] | None:
+    """Same grid with business units as rows — only when a BU mapping exists."""
+    if not any((r.get("bu") or "—") not in ("", "—") for r in rows):
+        return None
+    return _platform_env_matrix(rows, cost_key=cost_key, scheduled=scheduled, row_key="bu")
 
 
 @app.get("/api/pipelines")
@@ -1442,6 +1563,7 @@ def get_pipelines(
     env_tier: str = Query("all"),        # Dev | Test | Pre-prod | Sandbox | Non-prod | Prod | Unclassified
     why: str = Query("all"),             # failing | cost-spike | full-refresh-heavy | continuous | ...
     bu: str = Query("all"),
+    platform: str = Query("all"),        # workspace name minus its environment word
     search: str = Query(""),
     limit: int = Query(300),             # list cap; 0 = all ("Load all")
     status: str = Query("open"),         # open | acknowledged | wont_fix | in_progress | all (writeback)
@@ -1467,11 +1589,15 @@ def get_pipelines(
 
     rows = _annotate_env(rows)
     ws = _multi(workspace); pt = _multi(pipeline_type); en = _multi(environment)
-    tr = _multi(env_tier); wy = _multi(why); bus = _multi(bu)
+    tr = _multi(env_tier); wy = _multi(why); bus = _multi(bu); plf = _multi(platform)
     if ws:
         rows = [r for r in rows if _ws_match(r, ws)]
     if pt:
         rows = [r for r in rows if r.get("pipeline_type") in pt or r.get("type_label") in pt]
+    matrix = _platform_env_matrix(rows, cost_key="cost_usd_month")
+    bu_matrix = _bu_matrix(rows, cost_key="cost_usd_month")
+    if plf:
+        rows = [r for r in rows if _platform_match(r, plf)]
     if en:
         rows = [r for r in rows if r.get("environment") in en]
     if tr:
@@ -1485,6 +1611,9 @@ def get_pipelines(
         rows = [r for r in rows if q in str(r.get("name", "")).lower() or q in str(r.get("pipeline_id", "")).lower()
                 or q in str(r.get("owner", "")).lower()]
     summary = pipelines.summarize(rows)   # facts view: KPIs before the ack/status overlay
+    summary["platform_matrix"] = matrix
+    if bu_matrix:
+        summary["bu_matrix"] = bu_matrix
     acks = _acks_for("pipeline")
     ack_sink = _new_counts_sink(acks)
     rows = _apply_acks(

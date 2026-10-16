@@ -82,6 +82,40 @@ export interface Envelope<T, S = unknown> {
   // Soft degradation note (e.g. an ungranted live table) — distinct from a capped
   // list; rendered as a calm warning, not an error.
   message?: string;
+  // Platform × environment grid (/workspaces; jobs + pipelines carry it on summary).
+  platform_matrix?: PlatformEnvMatrix;
+  bu_matrix?: PlatformEnvMatrix;
+}
+
+// Platform (workspace name minus its environment word) × environment tier.
+export interface PlatformEnvCell {
+  cost: number;
+  count: number;
+  scheduled: number;
+  num_workspaces: number;
+}
+export interface PlatformEnvRow {
+  platform: string;
+  cells: Record<string, PlatformEnvCell>;
+  total_cost: number;
+  nonprod_cost: number;
+  nonprod_scheduled: number;
+  count: number;
+  workspaces: string[];
+  num_workspaces: number;
+  multi_env: boolean;
+}
+export interface PlatformEnvMatrix {
+  row_key?: "platform" | "bu";
+  coverage?: {
+    env_unclassified: number; env_from_mapping: number; env_from_name: number;
+    platform_from_mapping: number; platform_from_rule: number; platform_from_name: number;
+  };
+  tiers: string[];
+  rows: PlatformEnvRow[];
+  tier_totals: Record<string, number>;
+  num_platforms: number;
+  num_multi_env: number;
 }
 
 export interface CurrencyOption {
@@ -194,6 +228,7 @@ export interface ExecSummary {
 }
 
 export interface Workspace {
+  platform?: string;
   workspace_id: string;
   // `workspace` is the display name (friendly name in both modes, falling back to
   // the id in live when the name table is ungranted); workspace_id is the raw id.
@@ -621,6 +656,7 @@ export interface JobDetail {
 }
 
 export interface JobRow extends AckFields {
+  platform?: string;
   job_id: string;
   workspace_id: string;
   workspace: string;
@@ -679,6 +715,8 @@ export interface JobsByCompute {
   cost_usd_month: number;
 }
 export interface JobsSummary {
+  platform_matrix?: PlatformEnvMatrix;
+  bu_matrix?: PlatformEnvMatrix;
   num_jobs: number;
   num_failing: number;
   num_growing: number;
@@ -698,6 +736,7 @@ export interface JobsSummary {
 export type PipelineReason = "failing" | "cost-spike" | "full-refresh-heavy" | "continuous" | "development-mode" | "deleted-still-billing";
 
 export interface PipelineRow extends AckFields {
+  platform?: string;
   pipeline_id: string;
   workspace_id: string;
   workspace: string;
@@ -738,6 +777,8 @@ export interface PipelineTypeBreakdown {
 }
 
 export interface PipelinesSummary {
+  platform_matrix?: PlatformEnvMatrix;
+  bu_matrix?: PlatformEnvMatrix;
   num_pipelines: number;
   total_cost_usd_month: number;
   prev_total_cost_usd_month: number;

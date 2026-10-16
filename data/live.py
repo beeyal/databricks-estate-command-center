@@ -1101,46 +1101,37 @@ _SCHEMA_RE = re.compile(r"^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
 
 @_ttl_memo
 def _workspace_bu(warehouse_id: str) -> dict[str, dict[str, str]]:
-    """workspace_id -> {"bu", "owner"} from the customer-maintained mapping table
-    (config workspace_bu_table). Returns {} when the table isn't configured, the
-    identifier is malformed, or a read fails (ungranted/missing) — the caller then
-    omits the BU dimension (fail-soft; no crash). The only retried failure is a
-    missing optional `owner` column; a non-column error is NOT retried (no point
-    re-running the same failing read) and isn't masked as the no-owner case.
+    """workspace_id -> {"bu", "owner", "platform", "environment"} from the
+    customer-maintained mapping table (config workspace_bu_table). Returns {}
+    when the table isn't configured, the identifier is malformed, or the read
+    fails (ungranted/missing) — callers then omit the BU dimension and read
+    platform / environment from workspace names (fail-soft; no crash).
 
-    Expected columns: workspace_id, bu, and (optional) owner."""
+    Columns: workspace_id, bu, and OPTIONAL owner, platform, environment. The
+    optional ones override what the app would otherwise infer from the workspace
+    name — the fix for estates whose names don't follow a pattern. SELECT * so a
+    table with any subset of the optional columns works with one small read."""
     from data import config
 
     table = str(config.get_settings().get("workspace_bu_table") or "").strip()
-    if not table:
-        return {}
-    if not _UC_TABLE_RE.match(table):
+    if not table or not _UC_TABLE_RE.match(table):
         return {}
     try:
-        rows = _run(warehouse_id,
-            f"SELECT CAST(workspace_id AS STRING) ws, bu, owner FROM {table}",
-            "workspace->BU mapping")
-    except LiveError as e:
-        # The `owner` column is OPTIONAL — retry without it ONLY when the failure
-        # looks like a missing-column error. For a genuine grant/missing-table error
-        # there's no point re-running the same failing read, so fail soft to {} (the
-        # caller hides BU) — but DON'T mask it as the no-owner retry.
-        detail = (getattr(e, "detail", "") or "").upper()
-        missing_owner = "OWNER" in detail or "UNRESOLVED_COLUMN" in detail or "COLUMN" in detail
-        if not missing_owner:
-            return {}
-        try:
-            rows = _run(warehouse_id,
-                f"SELECT CAST(workspace_id AS STRING) ws, bu, CAST(NULL AS STRING) owner FROM {table}",
-                "workspace->BU mapping (no owner)")
-        except Exception:  # noqa: BLE001 — still unreadable → fail soft
-            return {}
+        rows = _run(warehouse_id, f"SELECT * FROM {table}", "workspace->BU mapping")
+    except Exception:  # noqa: BLE001 — unreadable → fail soft (BU hidden)
+        return {}
     out: dict[str, dict[str, str]] = {}
     for r in rows:
-        ws = r.get("ws")
+        lower = {str(k).lower(): v for k, v in r.items()}
+        ws = lower.get("workspace_id")
         if ws is None:
             continue
-        out[str(ws)] = {"bu": str(r.get("bu") or ""), "owner": str(r.get("owner") or "")}
+        out[str(ws).strip()] = {
+            "bu": str(lower.get("bu") or "").strip(),
+            "owner": str(lower.get("owner") or "").strip(),
+            "platform": str(lower.get("platform") or "").strip(),
+            "environment": str(lower.get("environment") or "").strip(),
+        }
     return out
 
 

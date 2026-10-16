@@ -32,15 +32,23 @@ CREATE SCHEMA IF NOT EXISTS main.finops_ref;
 CREATE TABLE IF NOT EXISTS main.finops_ref.workspace_bu (
   workspace_id STRING,   -- e.g. '6821148851943430'
   bu           STRING,   -- e.g. 'Energy Markets & Trading'
-  owner        STRING    -- optional; name or email (leave NULL if unused)
+  owner        STRING,   -- optional; name or email (leave NULL if unused)
+  platform     STRING,   -- optional; the product/platform, e.g. 'Forecasting'. Overrides
+                         --   what the app infers from the workspace name.
+  environment  STRING    -- optional; e.g. 'Dev', 'Test', 'Pre-prod', 'Prod'. Overrides the
+                         --   name. Fill these in for workspaces whose names don't follow
+                         --   your convention (the Jobs / Workspaces / Pipelines grid shows
+                         --   how much cost has no recognised environment).
 ) USING DELTA;
+-- Already have the table from an older version? Add the two optional columns:
+--   ALTER TABLE main.finops_ref.workspace_bu ADD COLUMNS (platform STRING, environment STRING);
 
 -- Replace these with your real workspaces. (Find IDs in:
 --   SELECT workspace_id, workspace_name FROM system.access.workspaces_latest)
 INSERT INTO main.finops_ref.workspace_bu VALUES
-  ('1111111111111111', 'Energy Markets & Trading', 'jane.doe@yourco.com'),
-  ('2222222222222222', 'Metering & NEM12',         'sam.lee@yourco.com'),
-  ('3333333333333333', 'Shared BI / AI-BI',        NULL);
+  ('1111111111111111', 'Energy Markets & Trading', 'jane.doe@yourco.com', 'Trading', 'Prod'),
+  ('2222222222222222', 'Metering & NEM12',         'sam.lee@yourco.com',  'Metering', 'Test'),
+  ('3333333333333333', 'Shared BI / AI-BI',        NULL,                  NULL,      NULL);
 
 -- ---------------------------------------------------------------------------
 -- 2) user -> team

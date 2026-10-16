@@ -75,6 +75,7 @@ ALWAYS = [
     # these used to rebuild the whole estate on a cold process
     "/api/recommendations/hub?priority=P1", "/api/jobs?environment=Non-production&schedule=active",
     "/api/pipelines?why=failing", "/api/queries?time_range=30d",
+    "/api/jobs?platform=__none__", "/api/workspaces?platform=__none__",
 ]
 for p in ALWAYS:
     st, body = call("GET", p)
@@ -95,7 +96,12 @@ for p in ALWAYS:
                 base = tot("by_compute_type") or 1
                 ok = all(abs(tot(k) - base) / base < 0.01 for k in ("by_workload", "by_environment", "by_env_tier"))
         elif p.startswith("/api/jobs"):
-            ok = isinstance(d, list) and "by_env_tier" in body.get("summary", {}) and "nonprod" in body.get("summary", {})
+            sm = body.get("summary", {})
+            ok = isinstance(d, list) and "by_env_tier" in sm and "nonprod" in sm and "platform_matrix" in sm
+            # the matrix must reconcile to the pre-platform-filter job cost
+            if ok and p == "/api/jobs":
+                m = sm["platform_matrix"]
+                ok = abs(sum(r["total_cost"] for r in m["rows"]) - sm["total_cost_usd_month"]) <= max(1.0, 0.001 * sm["total_cost_usd_month"])
         elif p == "/api/ai-cost":
             ok = isinstance(d, dict) and "callers" in d
     check(f"GET {p}", ok, f"status={st}" + ("" if ok else f" body={str(body)[:160]}"))

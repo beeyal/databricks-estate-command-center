@@ -154,9 +154,100 @@ def workspace_environment(name: str) -> str:
     return PROD
 
 
+@lru_cache(maxsize=1)
+def _platform_re() -> re.Pattern[str] | None:
+    pat = os.environ.get("FINOPS_PLATFORM_PATTERN") or ""
+    if not pat:
+        return None
+    try:
+        rx = re.compile(pat, re.IGNORECASE)
+        return rx if "platform" in rx.groupindex else None
+    except re.error:
+        return None
+
+
+@lru_cache(maxsize=4096)
+def workspace_platform(name: str) -> str:
+    """The platform / product a workspace belongs to, independent of its
+    environment: the workspace name with its environment word removed, so
+    ``dev-forecasting`` / ``test-forecasting`` / ``prod-forecasting`` are all
+    "forecasting" and ``DATA-EDP-TST`` / ``DATA-EDP-PRD`` are both "DATA-EDP".
+    Lets a team pick a platform and then see its Dev / Test / Pre-prod / Prod
+    breakdown. A name with no environment word is its own platform.
+    FINOPS_PLATFORM_PATTERN (a regex with a ``(?P<platform>…)`` group) overrides
+    the automatic rule for conventions it can't handle."""
+    raw = (name or "").strip()
+    # Configured naming rules win over the automatic rule (e.g. DATA-EDP- → EDP Core).
+    n = raw.lower()
+    for prefix, label in _group_rules():
+        if n.startswith(prefix):
+            return label
+    rx = _platform_re()
+    if rx is not None:
+        m = rx.search(raw)
+        if m and m.group("platform"):
+            return m.group("platform")
+    tokens = [t for t in _TOKEN_SPLIT.split(raw) if t]
+    if not tokens:
+        return raw
+    env_tokens = set().union(*(toks for _tier, toks in _tier_rules())) if _tier_rules() else set()
+    keep = [True] * len(tokens)
+    low = [t.lower() for t in tokens]
+    for i in range(len(tokens) - 1):           # "PRE-PROD", "NON_PROD" pairs
+        if low[i] + low[i + 1] in env_tokens:
+            keep[i] = keep[i + 1] = False
+    for i, t in enumerate(low):
+        if t in env_tokens:
+            keep[i] = False
+    rest = [t for t, k in zip(tokens, keep) if k]
+    if not rest or len(rest) == len(tokens):
+        return raw                              # nothing (or only an env word) to strip
+    return "-".join(rest)
+
+
+def classify(name: str, mapping: dict[str, str] | None = None) -> dict[str, str]:
+    """Platform + environment for one workspace, with WHERE each came from, by
+    precedence: the customer's mapping table (``platform`` / ``environment``
+    columns) → configured naming rules → the workspace name. Returns
+    {platform, platform_source, env_tier, environment, env_source, group}.
+
+    ``*_source`` is "mapping" | "rule" | "name" | "none", so the UI can be honest
+    about how much of the estate is classified from naming alone."""
+    m = mapping or {}
+    raw = (name or "").strip()
+    # Platform
+    if m.get("platform"):
+        platform, psrc = m["platform"], "mapping"
+    else:
+        n = raw.lower()
+        rule = next((label for prefix, label in _group_rules() if n.startswith(prefix)), None)
+        if rule:
+            platform, psrc = rule, "rule"
+        else:
+            platform = workspace_platform(raw)
+            psrc = "name" if platform != raw else "none"
+    # Environment
+    if m.get("environment"):
+        val = m["environment"]
+        tier = workspace_tier(val)
+        if tier == UNCLASSIFIED:
+            tier = val.strip().title()
+        env = NONPROD if (tier in NON_PROD_TIERS or (tier not in ("Prod",) and tier != UNCLASSIFIED
+                                                     and workspace_environment(val) == NONPROD)) else PROD
+        esrc = "mapping"
+    else:
+        tier = workspace_tier(raw)
+        env = workspace_environment(raw)
+        esrc = "name" if tier != UNCLASSIFIED else "none"
+    return {"platform": platform, "platform_source": psrc, "env_tier": tier, "environment": env,
+            "env_source": esrc, "group": workspace_group(raw)}
+
+
 def reset_cache() -> None:
     """Clear memoised rule parsing (startup mode switch, tests)."""
     _group_rules.cache_clear()
     _tier_rules.cache_clear()
     _nonprod_re.cache_clear()
+    _platform_re.cache_clear()
     workspace_tier.cache_clear()
+    workspace_platform.cache_clear()

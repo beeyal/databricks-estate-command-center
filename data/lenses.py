@@ -74,6 +74,8 @@ def lenses_live(warehouse_id: str, jobs_rows: list[dict[str, Any]] | None = None
 
     rows = live._run(warehouse_id, _SQL, "system.billing.usage (cost lenses)")
     names = live._workspace_names(warehouse_id)
+    mapping = live._workspace_bu(warehouse_id)   # optional platform / environment overrides
+    mapped_platforms = any(m.get("platform") for m in mapping.values())
 
     job_share = _shares(jobs_rows, lambda r: workload.classify_job(r.get("job_name", ""), r.get("compute_type")))
     pipe_share = _shares(pipeline_rows, lambda r: workload.STREAMING if r.get("continuous") else workload.BATCH)
@@ -90,15 +92,20 @@ def lenses_live(warehouse_id: str, jobs_rows: list[dict[str, Any]] | None = None
             continue
         total += usd
         product = str(r.get("product") or "")
-        name = names.get(str(r.get("workspace_id")), str(r.get("workspace_id")))
-        by_compute["Serverless" if live._f(r.get("serverless")) else "Classic"] = (
-            by_compute.get("Serverless" if live._f(r.get("serverless")) else "Classic", 0.0) + usd)
-        env = grouping.workspace_environment(name)
-        by_env[env] = by_env.get(env, 0.0) + usd
-        tier = grouping.workspace_tier(name)
-        by_tier[tier] = by_tier.get(tier, 0.0) + usd
-        grp = grouping.workspace_group(name)
-        by_group[grp] = by_group.get(grp, 0.0) + usd
+        wid = str(r.get("workspace_id"))
+        name = names.get(wid, wid)
+        cls = grouping.classify(name, mapping.get(wid))
+        ck = "Serverless" if live._f(r.get("serverless")) else "Classic"
+        by_compute[ck] = by_compute.get(ck, 0.0) + usd
+        by_env[cls["environment"]] = by_env.get(cls["environment"], 0.0) + usd
+        by_tier[cls["env_tier"]] = by_tier.get(cls["env_tier"], 0.0) + usd
+        # The platform lens only makes sense when platforms come from naming rules
+        # or the mapping table — automatic name-stripping alone gives one "platform"
+        # per workspace on an estate without a convention.
+        if cls["platform_source"] in ("rule", "mapping"):
+            by_group[cls["platform"]] = by_group.get(cls["platform"], 0.0) + usd
+        else:
+            by_group["Other"] = by_group.get("Other", 0.0) + usd
         if product == "JOBS":
             split = job_share or {workload.BATCH: 1.0}
         elif product == "DLT":
@@ -116,8 +123,8 @@ def lenses_live(warehouse_id: str, jobs_rows: list[dict[str, Any]] | None = None
         "by_environment": _bucket_list(by_env, total, [grouping.PROD, grouping.NONPROD]),
         "by_env_tier": _bucket_list(by_tier, total,
                                     ["Prod", "Pre-prod", "Test", "Dev", "Sandbox", "Non-prod", grouping.UNCLASSIFIED]),
-        "by_group": _bucket_list(by_group, total) if grouping.groups_configured() else [],
-        "groups_configured": grouping.groups_configured(),
+        "by_group": _bucket_list(by_group, total) if (grouping.groups_configured() or mapped_platforms) else [],
+        "groups_configured": grouping.groups_configured() or mapped_platforms,
         "workload_basis": ("Jobs split by job-name rules and pipelines by continuous vs triggered mode"
                            if (job_share or pipe_share) else
                            "Jobs and pipelines counted as Batch (job/pipeline detail not loaded yet)"),

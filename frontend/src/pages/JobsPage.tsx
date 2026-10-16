@@ -14,6 +14,7 @@ import { Sparkline } from "../components/shared/Sparkline";
 import { fmtMoney, fmtPct, fmtNum, byNamedFirst } from "../components/shared/format";
 import { ackEmptyMessage } from "../components/shared/AckStatusFilter";
 import { JobDetail } from "../components/jobs/JobDetail";
+import { PlatformEnvMatrix } from "../components/shared/PlatformEnvMatrix";
 import type { JobRow, JobReason } from "../types";
 
 const COMPUTE_STYLE: Record<string, string> = {
@@ -54,6 +55,7 @@ export function JobsPage() {
   const [workspace, setWorkspace] = useState<string[]>([]);
   const [environment, setEnvironment] = useState<string[]>([]);
   const [envTier, setEnvTier] = useState<string[]>([]);
+  const [platform, setPlatform] = useState<string[]>([]);
   const [schedule, setSchedule] = useState("all");
   // Deep-link from a workspace ("view this workspace's jobs"): seed the
   // workspace filter from the store once, then clear it.
@@ -83,6 +85,7 @@ export function JobsPage() {
       workspace: workspace.length ? workspace.join(",") : "all",
       environment: environment.length ? environment.join(",") : "all",
       env_tier: envTier.length ? envTier.join(",") : "all",
+      platform: platform.length ? platform.join(",") : "all",
       schedule,
       ...(buEnabled && bu.length ? { bu: bu.join(",") } : {}),
       time_range: timeRange,
@@ -90,7 +93,7 @@ export function JobsPage() {
       limit: showAll ? "0" : "300",
       ...(features.writeback ? { status } : {}),
     }),
-    [computeType.join(","), workload.join(","), why.join(","), workspace.join(","), environment.join(","), envTier.join(","), schedule, bu.join(","), timeRange, search, status, ackNonce, showAll],
+    [computeType.join(","), workload.join(","), why.join(","), workspace.join(","), environment.join(","), envTier.join(","), platform.join(","), schedule, bu.join(","), timeRange, search, status, ackNonce, showAll],
   );
 
   // Workspace filter options — ONLY workspaces that actually have jobs (derived
@@ -122,6 +125,12 @@ export function JobsPage() {
     () => tierRollup.map((t) => ({ value: t.env_tier, label: t.env_tier })),
     [tierRollup],
   );
+  const platformOptions = useMemo(
+    () => (allJobs?.summary?.platform_matrix?.rows ?? [])
+      .map((p) => ({ value: p.platform, label: p.platform }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true })),
+    [allJobs],
+  );
   const SCHEDULE_OPTIONS = [
     { value: "all", label: "All schedules" },
     { value: "active", label: "Active schedule (not paused)" },
@@ -135,7 +144,7 @@ export function JobsPage() {
   const capped = data?.list_capped;
 
   // Reset "show all" whenever the filters change — a fresh query starts capped.
-  useEffect(() => { setShowAll(false); }, [computeType.join(","), why.join(","), workspace.join(","), environment.join(","), envTier.join(","), schedule, bu.join(","), timeRange, search, status]);
+  useEffect(() => { setShowAll(false); }, [computeType.join(","), why.join(","), workspace.join(","), environment.join(","), envTier.join(","), platform.join(","), schedule, bu.join(","), timeRange, search, status]);
 
   const columns: Column<JobRow>[] = useMemo(() => [
     { key: "workspace", priority: "critical", header: "Workspace", sortValue: (r) => r.workspace, render: (r) => (
@@ -232,6 +241,9 @@ export function JobsPage() {
           { value: "ML / AI", label: "ML / AI" },
           { value: "Other", label: "Other" },
         ]} allLabel="All workloads" />
+        {platformOptions.length > 0 && (allJobs?.summary?.platform_matrix?.tiers ?? []).some((t) => t !== "Unclassified") && (
+          <MultiDropdown label="Platform" value={platform} onChange={setPlatform} options={platformOptions} allLabel="All platforms" />
+        )}
         {environmentOptions.length > 0 && (
           <MultiDropdown label="Environment" value={environment} onChange={setEnvironment} options={environmentOptions} allLabel="All environments" />
         )}
@@ -271,55 +283,38 @@ export function JobsPage() {
             </div>
           )}
 
-          {/* Activity by environment tier — the DEV / TEST / PRE-PROD clean-up view.
-              Clicking a tier filters to it; the call-out lists non-production jobs
-              still on an active schedule (they keep running — and billing — until
-              someone pauses them). Computed over the current filters. */}
-          {(summary?.by_env_tier?.length ?? 0) > 0 && (summary?.by_env_tier ?? []).some((t) => t.env_tier !== "Unclassified") && (
-            <div className="card flex flex-col gap-2">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-sm font-semibold">Activity by environment</h3>
-                <InfoTip text="Jobs that ran in the window, grouped by the environment tier read from the workspace name (e.g. DEV, TST/UAT, PPD/STG, PRD — configurable with FINOPS_ENV_TIERS). 'Scheduled' = jobs with a time or event trigger that isn't paused, i.e. they'll keep running until someone pauses or deletes them. Click a tier to filter the table." />
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {(summary?.by_env_tier ?? []).map((t) => {
-                  const active = envTier.length === 1 && envTier[0] === t.env_tier;
-                  return (
-                    <button
-                      key={t.env_tier}
-                      type="button"
-                      onClick={() => setEnvTier(active ? [] : [t.env_tier])}
-                      aria-pressed={active}
-                      className={`text-left rounded-md border px-3 py-2 min-w-[140px] focus-visible:ring-2 focus-visible:ring-accent/60 focus:outline-none ${active ? "border-accent bg-accent/5" : "border-border hover:bg-surface"}`}
-                    >
-                      <div className="text-xs font-medium flex items-center gap-1.5">
-                        {t.env_tier}
-                        {t.environment === "Non-production" && <span className="text-[10px] text-warning">non-prod</span>}
-                      </div>
-                      <div className="text-sm font-semibold tabular-nums">{fmtMoney(t.cost_usd_month, cur, { compact: true })}</div>
-                      <div className="text-[11px] text-neutral tabular-nums">
-                        {fmtNum(t.num_jobs, { compact: true })} jobs · {fmtNum(t.num_scheduled, { compact: true })} scheduled
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-              {(summary?.nonprod?.num_scheduled ?? 0) > 0 && (
-                <div className="flex flex-wrap items-center gap-2 text-xs border-t border-border/50 pt-2">
-                  <span className="text-brand-dark">
-                    <span className="font-semibold tabular-nums">{fmtNum(summary!.nonprod!.num_scheduled)}</span> non-production jobs are on an active schedule
-                    {" "}— <span className="font-semibold tabular-nums">{fmtMoney(summary!.nonprod!.scheduled_cost_usd_month, cur, { compact: true })}</span> in this window.
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setEnvironment(["Non-production"]); setEnvTier([]); setSchedule("active"); }}
-                    className="pill px-2.5 py-1 border border-border text-neutral hover:text-brand-dark hover:bg-surface focus-visible:ring-2 focus-visible:ring-accent/60 focus:outline-none"
-                  >
-                    Show them
-                  </button>
-                  <span className="text-neutral/70">Pause the ones nobody has asked for; each row shows its owner and last run.</span>
-                </div>
-              )}
+          {/* Platform × environment — pick a platform (the workspace name minus its
+              environment word, e.g. "forecasting" for dev-/test-/prod-forecasting)
+              and see its Dev / Test / Pre-prod / Prod side by side. Clicking a cell
+              filters the table. The non-prod call-out lists jobs still on an active
+              schedule in Dev / Test / Pre-prod — they keep running (and billing)
+              until someone pauses them. */}
+          <PlatformEnvMatrix
+            matrix={summary?.platform_matrix}
+            itemLabel="jobs"
+            showScheduled
+            platform={platform}
+            tier={envTier}
+            onSelect={(p, t) => { setPlatform(p); setEnvTier(t); setEnvironment([]); setBu([]); }}
+            buMatrix={buEnabled ? summary?.bu_matrix : undefined}
+            bu={bu}
+            onSelectBu={(b, t) => { setBu(b); setEnvTier(t); setEnvironment([]); setPlatform([]); }}
+          />
+          {(summary?.nonprod?.num_scheduled ?? 0) > 0 && (
+            <div className="card flex flex-wrap items-center gap-2 text-xs py-2.5">
+              <span className="text-brand-dark">
+                <span className="font-semibold tabular-nums">{fmtNum(summary!.nonprod!.num_scheduled)}</span> non-production jobs
+                {platform.length === 1 ? <> in <span className="font-semibold">{platform[0]}</span></> : null} are on an active schedule
+                {" "}— <span className="font-semibold tabular-nums">{fmtMoney(summary!.nonprod!.scheduled_cost_usd_month, cur, { compact: true })}</span> in this window.
+              </span>
+              <button
+                type="button"
+                onClick={() => { setEnvironment(["Non-production"]); setEnvTier([]); setSchedule("active"); }}
+                className="pill px-2.5 py-1 border border-border text-neutral hover:text-brand-dark hover:bg-surface focus-visible:ring-2 focus-visible:ring-accent/60 focus:outline-none"
+              >
+                Show them
+              </button>
+              <span className="text-neutral/70">Pause the ones nobody has asked for; each row shows its owner and last run.</span>
             </div>
           )}
 

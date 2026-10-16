@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fetchPipelines } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import { useCurrency, useFeatures, useBuEnabled } from "../store/appStore";
+import { PlatformEnvMatrix } from "../components/shared/PlatformEnvMatrix";
 import { PageShell, LoadingCard, ErrorCard } from "../components/layout/PageShell";
 import { DataTable } from "../components/shared/DataTable";
 import type { Column } from "../components/shared/DataTable";
@@ -46,6 +47,7 @@ export function PipelinesPage() {
   const [pipelineType, setPipelineType] = useState<string[]>([]);
   const [environment, setEnvironment] = useState<string[]>([]);
   const [envTier, setEnvTier] = useState<string[]>([]);
+  const [platform, setPlatform] = useState<string[]>([]);
   const [why, setWhy] = useState<string[]>([]);
   const [workspace, setWorkspace] = useState<string[]>([]);
   const [bu, setBu] = useState<string[]>([]);
@@ -59,6 +61,7 @@ export function PipelinesPage() {
       pipeline_type: pipelineType.length ? pipelineType.join(",") : "all",
       environment: environment.length ? environment.join(",") : "all",
       env_tier: envTier.length ? envTier.join(",") : "all",
+      platform: platform.length ? platform.join(",") : "all",
       why: why.length ? why.join(",") : "all",
       workspace: workspace.length ? workspace.join(",") : "all",
       ...(buEnabled && bu.length ? { bu: bu.join(",") } : {}),
@@ -66,7 +69,7 @@ export function PipelinesPage() {
       limit: showAll ? "0" : "300",
       ...(features.writeback ? { status } : {}),
     }),
-    [pipelineType.join(","), environment.join(","), envTier.join(","), why.join(","), workspace.join(","), bu.join(","), search, status, ackNonce, showAll],
+    [pipelineType.join(","), environment.join(","), envTier.join(","), platform.join(","), why.join(","), workspace.join(","), bu.join(","), search, status, ackNonce, showAll],
   );
 
   // Fetch distinct values for filter dropdowns
@@ -199,6 +202,11 @@ export function PipelinesPage() {
           { value: "development-mode", label: "Development mode" },
           { value: "deleted-still-billing", label: "Deleted, still billing" },
         ]} allLabel="All pipelines" />
+        {(allPipelines?.summary?.platform_matrix?.tiers ?? []).some((t) => t !== "Unclassified") && (
+          <MultiDropdown label="Platform" value={platform} onChange={setPlatform} allLabel="All platforms"
+            options={(allPipelines?.summary?.platform_matrix?.rows ?? []).map((p) => ({ value: p.platform, label: p.platform }))
+              .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true }))} />
+        )}
         <SearchBox value={search} onChange={setSearch} placeholder="Search pipeline or workspace…" />
       </FilterBar>
 
@@ -208,12 +216,23 @@ export function PipelinesPage() {
         <>
           <KpiRow cols={6}>
             <KpiCard label="Pipelines" value={String(summary?.num_pipelines ?? 0)} tone="neutral" info="Number of pipelines (Lakeflow, DLT, MV/ST with pipeline IDs) matching the current filters." />
-            <KpiCard label="Pipeline cost / mo" value={fmtMoney(summary?.total_cost_usd_month ?? 0, cur, { compact: true })} tone="accent" delta={summary?.mom_pct != null && Math.abs(summary.mom_pct) >= 0.005 ? { text: `${summary.mom_pct > 0 ? "+" : "−"}${fmtPct(Math.abs(summary.mom_pct))} MoM`, tone: summary.mom_pct > 0 ? "negative" : "positive" } : undefined} info="Total monthly cost of filtered pipelines (MoM compares this month against last month)." />
+            <KpiCard label="Pipeline cost / mo" value={fmtMoney(summary?.total_cost_usd_month ?? 0, cur, { compact: true })} tone="accent" delta={summary?.mom_pct != null && Math.abs(summary.mom_pct) >= 0.005 ? { text: `${summary.mom_pct > 0 ? "+" : "−"}${fmtPct(Math.abs(summary.mom_pct))} MoM`, tone: summary.mom_pct > 0 ? "negative" : "positive" } : undefined} info="Cost of the filtered pipelines over the trailing 30 days; the change compares with the 30 days before." />
             <KpiCard label="MV/ST cost / mo" value={fmtMoney(summary?.mv_st_cost_usd_month ?? 0, cur, { compact: true })} tone="info" hint={`${summary?.num_mv_st ?? 0} tables`} info="Cost attributable to SQL materialized views and streaming tables in the filtered scope." />
             <KpiCard label="Serverless %" value={fmtPct(summary?.serverless_pct ?? 0)} tone="success" info="Share of pipeline compute running on Databricks Serverless (vs Classic/Provisioned)." />
-            <KpiCard label="Failing" value={String(summary?.num_failing ?? 0)} tone="danger" hint="≥15% fail rate" info="Pipelines with ≥15% of recent updates failed, or the fail rate is rising." />
-            <KpiCard label="Continuous" value={String(summary?.num_continuous ?? 0)} tone="accent" info="Pipelines set to continuous run (not event/trigger-based)." />
+            <KpiCard label="Failing" value={String(summary?.num_failing ?? 0)} tone="danger" hint="≥20% of updates" info="Pipelines where at least 20% of updates in the last 30 days failed (with at least 3 updates)." />
+            <KpiCard label="Continuous" value={String(summary?.num_continuous ?? 0)} tone="accent" info="Pipelines set to continuous mode — they run (and bill) all the time rather than on a trigger or schedule. Worth checking in non-production." />
           </KpiRow>
+
+          <PlatformEnvMatrix
+            matrix={summary?.platform_matrix}
+            itemLabel="pipelines"
+            platform={platform}
+            tier={envTier}
+            onSelect={(p, t) => { setPlatform(p); setEnvTier(t); setEnvironment([]); setBu([]); }}
+            buMatrix={buEnabled ? summary?.bu_matrix : undefined}
+            bu={bu}
+            onSelectBu={(b, t) => { setBu(b); setEnvTier(t); setEnvironment([]); setPlatform([]); }}
+          />
 
           {/* Cost by pipeline type */}
           {summary?.by_type && summary.by_type.length > 0 && (

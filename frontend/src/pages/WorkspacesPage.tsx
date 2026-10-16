@@ -23,6 +23,7 @@ import {
   SkuBreakdownTable,
 } from "../components/charts/CostDriverCharts";
 import type { Workspace } from "../types";
+import { PlatformEnvMatrix } from "../components/shared/PlatformEnvMatrix";
 
 type WorkspacesView = "workspaces" | "sku";
 
@@ -33,20 +34,20 @@ export function WorkspacesPage() {
   const [customer, setCustomer] = useState<string[]>([]);
   const [complexity, setComplexity] = useState<string[]>([]);
   const [health, setHealth] = useState<string[]>([]);
-  const [grp, setGrp] = useState<string[]>([]);
   const [env, setEnv] = useState<string[]>([]);
   const [tier, setTier] = useState<string[]>([]);
+  const [platform, setPlatform] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const { data, loading, error } = useApi(
     () => fetchWorkspaces({
       complexity: complexity.length ? complexity.join(",") : "all",
       health: health.length ? health.join(",") : "all",
-      group: grp.length ? grp.join(",") : "all",
       environment: env.length ? env.join(",") : "all",
       env_tier: tier.length ? tier.join(",") : "all",
+      platform: platform.length ? platform.join(",") : "all",
       search,
     }),
-    [complexity.join(","), health.join(","), grp.join(","), env.join(","), tier.join(","), search],
+    [complexity.join(","), health.join(","), env.join(","), tier.join(","), platform.join(","), search],
   );
 
   // BU/Customer options come from a SEPARATE unfiltered fetch (matching Jobs/
@@ -58,11 +59,13 @@ export function WorkspacesPage() {
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
     return set.map((b) => ({ value: b, label: b }));
   }, [allWs]);
-  // Naming-convention group + environment options, from the unfiltered set. The
-  // group facet only appears when grouping is configured (some group isn't "Other").
-  const groupOptions = useMemo(() => {
-    const set = Array.from(new Set((allWs?.data ?? []).map((r) => r.group).filter(Boolean) as string[])).sort();
-    return set.some((g) => g !== "Other") ? set.map((g) => ({ value: g, label: g })) : [];
+  // Environment options, from the unfiltered set. (Naming-convention groups are
+  // now part of Platform — see platformOptions.)
+  const platformOptions = useMemo(() => {
+    const m = allWs?.platform_matrix;
+    if (!m || !m.tiers.some((t) => t !== "Unclassified")) return [];
+    return m.rows.map((p) => ({ value: p.platform, label: p.platform }))
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true }));
   }, [allWs]);
   const tierOptions = useMemo(() => {
     const order = ["Prod", "Pre-prod", "Test", "Dev", "Sandbox", "Non-prod", "Unclassified"];
@@ -113,7 +116,7 @@ export function WorkspacesPage() {
     { key: "savings", header: (<span className="inline-flex items-center gap-1">Savings/mo<InfoTip text="ESTIMATED optimisation headroom, not a measured or realised saving = this workspace's spend × the Savings % heuristic. Validate specific plays on the Recommendations tab before banking any number." /></span>), align: "right", sortValue: (r) => r.savings_usd_month, render: (r) => <span className="tabular-nums text-success">{fmtMoney(r.savings_usd_month, cur, { compact: true })}</span> },
     { key: "savings_pct", header: (<span className="inline-flex items-center gap-1">Savings %<InfoTip text="MODELED headroom estimate (not a measured or realised saving): a heuristic driven by how much of the workspace is un-automated and non-serverless (plus idle share where available) — low automation + low serverless share ⇒ more room to productionise / move to serverless. A directional signal, capped so it never claims an implausibly large fraction; the Recommendations tab has the specific, evidence-backed plays." /></span>), align: "right", sortValue: (r) => r.savings_pct, render: (r) => <span className="tabular-nums">{fmtPct(r.savings_pct)}</span> },
     { key: "automated", header: (<span className="inline-flex items-center gap-1">Automation %<InfoTip text="Share of this workspace's DBUs that run on AUTOMATED compute — scheduled Jobs + DLT/Lakeflow pipelines — vs interactive/all-purpose/SQL. Higher = more of the workload is productionised (typically cheaper + more predictable); low automation is common for exploratory/data-science workspaces and isn't inherently bad." /></span>), sortValue: (r) => r.automated_pct, render: (r) => <ProgressBar value={r.automated_pct} tone="info" /> },
-    ...(groupOptions.length > 0 ? [{ key: "group", header: "Group", priority: "high" as const, sortValue: (r: Workspace) => r.group ?? "", render: (r: Workspace) => r.group ? <Pill className="bg-accent/10 text-accent">{r.group}</Pill> : <span className="text-xs text-neutral">—</span> }] : []),
+    ...(platformOptions.length > 0 ? [{ key: "platform", header: "Platform", priority: "high" as const, sortValue: (r: Workspace) => r.platform ?? "", render: (r: Workspace) => r.platform && r.platform !== r.workspace ? <span className="text-xs text-brand-dark">{r.platform}</span> : <span className="text-xs text-neutral">—</span> }] : []),
     { key: "environment", header: "Env", align: "center", priority: "high", sortValue: (r) => r.env_tier ?? r.environment ?? "", render: (r) => (
       r.environment === "Production"
         ? <Pill className="bg-success/10 text-success">{r.env_tier && r.env_tier !== "Unclassified" ? r.env_tier : "Prod"}</Pill>
@@ -173,17 +176,28 @@ export function WorkspacesPage() {
                 <MultiDropdown label="Automation" value={health} onChange={setHealth} options={[
                   { value: "Good", label: "High (≥60%)" }, { value: "Warning", label: "Medium (25–60%)" }, { value: "Critical", label: "Low (<25%)" },
                 ]} allLabel="All" />
-                {groupOptions.length > 0 && (
-                  <MultiDropdown label="Group" value={grp} onChange={setGrp} options={groupOptions} allLabel="All groups" />
-                )}
                 {envOptions.length > 0 && (
                   <MultiDropdown label="Environment" value={env} onChange={setEnv} options={envOptions} allLabel="All environments" />
+                )}
+                {platformOptions.length > 0 && (
+                  <MultiDropdown label="Platform" value={platform} onChange={setPlatform} options={platformOptions} allLabel="All platforms" />
                 )}
                 {tierOptions.length > 0 && (
                   <MultiDropdown label="Env tier" value={tier} onChange={setTier} options={tierOptions} allLabel="All tiers" />
                 )}
                 <SearchBox value={search} onChange={setSearch} placeholder={buEnabled ? "Search workspace or BU…" : "Search workspace…"} />
               </FilterBar>
+
+              <PlatformEnvMatrix
+                matrix={data?.platform_matrix}
+                itemLabel="workspaces"
+                platform={platform}
+                tier={tier}
+                onSelect={(p, t) => { setPlatform(p); setTier(t); setEnv([]); setCustomer([]); }}
+                buMatrix={buEnabled ? data?.bu_matrix : undefined}
+                bu={customer}
+                onSelectBu={(b, t) => { setCustomer(b); setTier(t); setEnv([]); setPlatform([]); }}
+              />
 
               {(() => {
                 const flagged = rows.filter((r) => r.anomaly);
