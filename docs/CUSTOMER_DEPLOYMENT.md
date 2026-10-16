@@ -50,7 +50,7 @@ tools on your laptop. Everything below happens in the Databricks UI.
 | ⚡ | **1 SQL warehouse** *(you provide — not created by the deploy)* | A serverless SQL warehouse you already have powers the reads; supply its id as `DATABRICKS_WAREHOUSE_ID`. Scales to zero when idle. |
 | 🗄️ | **Gold Delta tables** under `<gold_schema>` (`finops_gold`, `finops_gold_table_sizes`, `finops_gold_warehouse_daily`, `finops_gold_cluster_daily`) | Nightly-precomputed estate payloads (every tab) + a per-table size census + daily-grain warehouse/cluster history, so estate pages load in ~1s instead of re-scanning account-wide system tables per request. **Required in live mode** — populated by the gold-sync job below. |
 | 💾 | **`finops_payload_cache`** (created automatically) | A small cache of each tab's last good result, so a restarted app serves pages straight away instead of recomputing them. On `-t customer` it lives in the bundle's Lakebase instance; on `-t customer-delta` it's a Delta table in your writeback schema (the gold schema unless you set `FINOPS_WRITEBACK_SCHEMA`). Nothing to configure. |
-| 🔁 | **Two scheduled jobs** (`finops_gold_sync` nightly + `estate-command-center-admin-sync` daily) | Gold-sync precomputes the estate payloads (**required for live mode**); admin-sync fills the governance & access panels that don't live in system tables (budgets, policies, tokens, groups). **Both ship paused** — unpause gold-sync for live (admin-sync is optional). |
+| 🔁 | **Two scheduled jobs** (`estate-command-center-gold-sync` nightly + `estate-command-center-admin-sync` daily) | Gold-sync precomputes the estate payloads (**required for live mode**); admin-sync fills the governance & access panels that don't live in system tables (budgets, policies, tokens, groups). **Both ship paused** — unpause gold-sync for live (admin-sync is optional). |
 
 > [!IMPORTANT]
 > The app runs as its own **service principal** — a machine identity Databricks creates
@@ -105,7 +105,7 @@ That's the whole required configuration. Deploy (Step ③), grant the app read a
 | Value | What it is | If left blank |
 |---|---|---|
 | `DATABRICKS_WAREHOUSE_ID` | The serverless SQL warehouse the app queries with. Grant its service principal **CAN USE** (Step ④). | App stays on demo data + shows the setup banner. |
-| `FINOPS_GOLD_SCHEMA` | Where the nightly `finops_gold_sync` job stores its pre-aggregated tables. The app reads these in ~1 s instead of scanning account-wide system tables on every page. **The job creates the schema + tables for you** — you just need `CREATE` on the catalog. | App stays on demo data + shows the setup banner. |
+| `FINOPS_GOLD_SCHEMA` | Where the nightly `estate-command-center-gold-sync` job stores its pre-aggregated tables. The app reads these in ~1 s instead of scanning account-wide system tables on every page. **The job creates the schema + tables for you** — you just need `CREATE` on the catalog. | App stays on demo data + shows the setup banner. |
 | `USE_LIVE` | Already `"true"` (ships live). Set to `"false"` only to **force demo on purpose** (no banner). | — |
 
 > [!IMPORTANT]
@@ -116,7 +116,7 @@ That's the whole required configuration. Deploy (Step ③), grant the app read a
 > warehouse) are set, the app **doesn't fail** — it falls back to demo with the setup
 > banner. (Read-only eval with no writable schema? Set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"`
 > to read straight off system tables — slow, not for production.) After configuring, run
-> `finops_gold_sync` **once** (Step ⑤) or the estate pages stay empty until the first
+> `estate-command-center-gold-sync` **once** (Step ⑤) or the estate pages stay empty until the first
 > nightly run.
 
 ### Everything else is optional — leave it blank unless you want it
@@ -386,9 +386,11 @@ that don't apply to you**; most deployments need none of them.
 
 ## Step ⑤ — Turn on the scheduled jobs
 
-In **Workflows**, unpause the jobs (both ship paused):
+In **Jobs & Pipelines**, unpause the jobs (both ship paused). **Every redeploy pauses them
+again**, so unpause them after each upgrade too:
 
-- **`finops_gold_sync`** (nightly) — **required for live mode.** Precomputes every estate
+- **`estate-command-center-gold-sync`** (nightly; `finops_gold_sync` in `databricks.yml`; the
+  prefix is your `app_name`) — **required for live mode.** Precomputes every estate
   payload (all tabs, including jobs, recommendations and governance) + a per-table size
   census into several tables under `<gold_schema>` — `finops_gold`, `finops_gold_table_sizes`,
   `finops_gold_warehouse_daily` and `finops_gold_cluster_daily` (the last two are daily-grain
@@ -458,7 +460,7 @@ It's a 2-minute copy-paste:
    CATALOG`/`USE SCHEMA` on their catalog/schema) — the `mapping_tables_setup.sql`
    file includes the grant; just set the principal. Without it the app reads
    nothing and silently shows no BU/team (it fails soft — no error, no crash).
-   **Grant the `finops_gold_sync` job's service principal too** — in live mode the
+   **Grant the `estate-command-center-gold-sync` job's service principal too** — in live mode the
    team join runs when that (required) job precomputes the adoption payload (see the
    note below).
 3. **Point the app at them** — in the **same `app.yaml`** you edited in Step ②, fill in the
@@ -475,7 +477,7 @@ It's a 2-minute copy-paste:
 > **When the values appear:** the BU facet and Team column switch on **immediately**
 > after the redeploy. BU, platform and environment on the Workspaces, Jobs and Pipelines
 > tabs are applied when the page is served, so edits to `workspace_bu` show up within
-> about 10 minutes. Team values on the Adoption tab are joined when `finops_gold_sync`
+> about 10 minutes. Team values on the Adoption tab are joined when `estate-command-center-gold-sync`
 > precomputes that page, so they appear **after the next run** (run the job manually
 > once to see them straight away).
 
@@ -535,13 +537,21 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
 1. In the workspace Git folder, **pull** the latest `main` (Git folder → branch menu → Pull).
    The built frontend is committed, so there is nothing to build.
 2. Re-run the deploy cell (`bundle deploy` + `bundle run estate`) with your existing target.
-3. **Run `finops_gold_sync` once** (below). Snapshots written by the older version are
-   detected and recomputed on first use, so nothing breaks in the meantime — it's just
-   slower until the job has run.
-4. **Fix the Data Quality grant** if you ran the old schema-level one: it fails by design,
-   so run the table grant from step ④ instead.
-5. Optional new grant: `system.serving` (step ④) for the AI $ **Who is calling** section.
-6. Optional new settings in `app.yaml` (all blank by default, all safe to leave blank):
+   This updates the app **and both jobs**: the jobs run the Python files the deploy uploads,
+   so they pick up the new code too.
+   **The deploy also puts both job schedules back to paused**, because `databricks.yml`
+   ships them paused and a deploy resets each job to the bundle's definition. Unpause
+   `estate-command-center-gold-sync` again in **Jobs & Pipelines** afterwards, plus
+   `estate-command-center-admin-sync` if you use it. If you forget, the manual run below
+   still works, but the nightly rebuild stops and pages go stale from the next day.
+3. **Run the new grants** (step ④): the Data Quality grant is now on the **table**
+   (`GRANT SELECT ON TABLE system.data_quality_monitoring.table_results …`). The old
+   schema-level version fails by design. Optionally, also grant `system.serving` for the
+   AI $ **Who is calling** section.
+4. **Run `estate-command-center-gold-sync` once**, after the grants so it can read the new
+   tables. Snapshots written by the older version are detected and recomputed on first
+   use, so nothing breaks in the meantime — it's just slower until the job has run.
+5. Optional new settings in `app.yaml` (all blank by default, all safe to leave blank):
 
    | Setting | What it does |
    |---|---|
@@ -557,11 +567,11 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
    handle) and `FINOPS_TABLES_LIMIT` (how many tables the Tables tab reads, default 25,000).
 
 > [!IMPORTANT]
-> **After an upgrade, re-run `finops_gold_sync` once.** The Overview, Jobs, Tables and
+> **After an upgrade, re-run `estate-command-center-gold-sync` once.** The Overview, Jobs, Tables and
 > Governance tabs serve the **nightly precomputed gold snapshot**, not a live scan — so a
 > new release that changes how those tabs compute their numbers only takes effect once the
 > gold job rebuilds with the new code. Redeploying the app alone updates the code but keeps
-> serving the *previous* snapshot until the next scheduled run. Trigger `finops_gold_sync`
+> serving the *previous* snapshot until the next scheduled run. Trigger `estate-command-center-gold-sync`
 > manually after upgrading (or wait for the nightly run) so every tab reflects the new
 > version. (The live-scan tabs — Warehouses, Clusters, Query Advisor, Genie $, AI $ — pick
 > up the new code on the app restart alone; only bump `FINOPS_CACHE_VERSION` if you want to
@@ -584,16 +594,17 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
 | Symptom | Fix |
 |---|---|
 | A tab shows a 503 / "read failed" | The warehouse is stopped, or a grant is missing — the message names the exact object. Re-run the grant from step ④. |
-| App shows demo data + a "finish setup to go live" banner | Live mode is on but the warehouse and/or gold schema aren't set yet, so the app fell back to demo (it never fails to start). Set `DATABRICKS_WAREHOUSE_ID` + `FINOPS_GOLD_SCHEMA` in `app.yaml` (step ②), redeploy, grant read access (step ④), and run `finops_gold_sync` once (step ⑤). For a read-only eval with no writable schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` (slow; not for production). |
-| Live mode on + configured, but pages are empty | Confirm `DATABRICKS_WAREHOUSE_ID` **and** `FINOPS_GOLD_SCHEMA` are set, that you re-ran the deploy cell, and that you **ran `finops_gold_sync` once** (step ⑤) — live pages serve from gold, which is empty until the first run. |
+| App shows demo data + a "finish setup to go live" banner | Live mode is on but the warehouse and/or gold schema aren't set yet, so the app fell back to demo (it never fails to start). Set `DATABRICKS_WAREHOUSE_ID` + `FINOPS_GOLD_SCHEMA` in `app.yaml` (step ②), redeploy, grant read access (step ④), and run `estate-command-center-gold-sync` once (step ⑤). For a read-only eval with no writable schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` (slow; not for production). |
+| Live mode on + configured, but pages are empty | Confirm `DATABRICKS_WAREHOUSE_ID` **and** `FINOPS_GOLD_SCHEMA` are set, that you re-ran the deploy cell, and that you **ran `estate-command-center-gold-sync` once** (step ⑤) — live pages serve from gold, which is empty until the first run. |
+| Data stopped refreshing after an upgrade or redeploy (figures stuck on an earlier day) | A redeploy resets both job schedules to **paused** (that's how `databricks.yml` ships them). Unpause `estate-command-center-gold-sync` (and admin-sync if you use it) in **Jobs & Pipelines** again after every deploy. |
 | Governance / Access group panels show "run the daily job" | Unpause **estate-command-center-admin-sync** (step ⑤) and let it run once. |
 | **Acknowledge / Reopen buttons do nothing** (or the ack controls disappeared) after you **deleted + recreated** the app | A recreated app gets a **new service principal**, which cannot use the previous SP's writeback schema (Delta: "permission denied"; Lakebase: "permission denied for schema …"). The app now reports writeback **off** with the reason rather than failing silently. **Fix:** for the Lakebase backend set a **fresh** `FINOPS_LAKEBASE_SCHEMA` (e.g. `estate2`) so the new SP creates + owns its own schema, then redeploy; for the Delta backend re-run the `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<new-app-service-principal>\`` from step ④ with the new SP. |
-| Pages slow | Confirm the `finops_gold_sync` job actually ran **and its output shows `ok`** for each key (step ⑤) — `skipped (kept previous snapshot)` names the failing read; the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale or you enabled the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch. Use a serverless SQL warehouse (Small or larger) for the app. The first load after a redeploy can take longer while the cache warms; after that tab switches and filters are served from memory. |
+| Pages slow | Confirm the `estate-command-center-gold-sync` job actually ran **and its output shows `ok`** for each key (step ⑤) — `skipped (kept previous snapshot)` names the failing read; the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale or you enabled the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch. Use a serverless SQL warehouse (Small or larger) for the app. The first load after a redeploy can take longer while the cache warms; after that tab switches and filters are served from memory. |
 | `GRANT … ON SCHEMA system.data_quality_monitoring` fails with **"User does not have MANAGE on Schema"** — even for an account + metastore admin | Expected: Databricks owns that schema and only gives admins MANAGE on the **table**. Run `GRANT SELECT ON TABLE system.data_quality_monitoring.table_results TO \`<app-sp>\`` instead (SQL, or the table's Permissions dialog — the schema's Permissions button is greyed out). |
-| Jobs tab: "**Inline byte limit exceeded**" (often shown with a "needs read access" hint in older versions) | Not a permissions problem — the result was over the 25 MiB inline limit on a large estate. Upgrade (see Upgrades): current versions fall back to `EXTERNAL_LINKS`, then to sharded reads, and only mention grants for a real permission error. Then re-run `finops_gold_sync` so the nightly snapshot is rebuilt. |
-| A tab keeps showing an old error after you fixed a grant | Older versions cached the error (in memory for an hour, and in the nightly snapshot until the next run). Current versions retry within a minute and never snapshot an error; on an older version, re-run `finops_gold_sync` and restart the app. |
+| Jobs tab: "**Inline byte limit exceeded**" (often shown with a "needs read access" hint in older versions) | Not a permissions problem — the result was over the 25 MiB inline limit on a large estate. Upgrade (see Upgrades): current versions fall back to `EXTERNAL_LINKS`, then to sharded reads, and only mention grants for a real permission error. Then re-run `estate-command-center-gold-sync` so the nightly snapshot is rebuilt. |
+| A tab keeps showing an old error after you fixed a grant | Older versions cached the error (in memory for an hour, and in the nightly snapshot until the next run). Current versions retry within a minute and never snapshot an error; on an older version, re-run `estate-command-center-gold-sync` and restart the app. |
 | AI $ doesn't list some people who use AI | Genie (Spaces and Genie Code) is on the **Genie $** tab, and the Databricks Assistant isn't metered. For model-serving / Foundation Model API callers, grant `system.serving` (step ④) so **Who is calling** can read `endpoint_usage`. The window is month to date. |
-| **Tables** shows far fewer tables than you have | Two causes. (1) `system.information_schema.tables` only lists tables the app's service principal can see — grant `BROWSE` per catalog (see "widen the Access page" in step ④; BROWSE shows metadata, not data). (2) Older versions read at most 200 tables; current versions read up to 25,000 (`FINOPS_TABLES_LIMIT`) and show the top 500 with **Load all**. Re-run `finops_gold_sync` after upgrading. Sizes come from the nightly census, which only covers tables the job's SP can `DESCRIBE DETAIL`. |
+| **Tables** shows far fewer tables than you have | Two causes. (1) `system.information_schema.tables` only lists tables the app's service principal can see — grant `BROWSE` per catalog (see "widen the Access page" in step ④; BROWSE shows metadata, not data). (2) Older versions read at most 200 tables; current versions read up to 25,000 (`FINOPS_TABLES_LIMIT`) and show the top 500 with **Load all**. Re-run `estate-command-center-gold-sync` after upgrading. Sizes come from the nightly census, which only covers tables the job's SP can `DESCRIBE DETAIL`. |
 | The **platform × environment** grid is missing, shows an explanation, or puts workspaces in the wrong environment | The app reads platform and environment from the workspace name unless told otherwise. Add `platform` and `environment` columns to your workspace mapping table (see [`reference/mapping_tables_setup.sql`](../reference/mapping_tables_setup.sql)) for workspaces whose names don't follow the convention, or set `FINOPS_WORKSPACE_GROUPS` / `FINOPS_ENV_TIERS` in `app.yaml`. Mapping-table values always win. |
 | Can't find the cost of a pipeline / materialized view | Use the **Pipelines** tab — MV/ST refreshes are billed with a pipeline id (often under the SQL product), so they're not on Jobs or Query Advisor. |
 | No **BU** facet / no **Team** column | Those are optional (step ⑥). Create the mapping tables from [`reference/mapping_tables_setup.sql`](../reference/mapping_tables_setup.sql), set `workspace_bu_table` / `user_team_table`, grant the app SP `SELECT`, and redeploy. |
