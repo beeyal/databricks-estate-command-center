@@ -34,11 +34,6 @@ variables:
       UC schema (catalog.schema) the finops_admin_sync job writes admin-API data
       into (finops_admin table). Also used as the roll-up cache schema.
     default: ""
-  lakebase_instance:
-    description: >-
-      Name of the Lakebase instance the customer target creates for acknowledge/dismiss state.
-      Change it only if the name is already taken in your workspace.
-    default: finops-command-center-state
   llm_model:
     description: >-
       Claude model for optional LLM narration (FMAPI serving endpoint).
@@ -62,9 +57,6 @@ sync:
     - "*.md"
     - .gitignore
     - .databricksignore
-    # the notebook deploy helper and the CLI it runs aren't part of the app
-    - scripts/notebook_deploy.py
-    - vendor/**
 
 # ---------------------------------------------------------------------------
 # Resources — the App itself. Runtime config (feature flags, USE_LIVE,
@@ -198,7 +190,7 @@ targets:
     resources:
       database_instances:
         finops_state:
-          name: ${var.lakebase_instance}
+          name: finops-command-center-state
           capacity: CU_1                 # smallest tier — ample for ack writeback
       apps:
         estate:
