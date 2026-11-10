@@ -66,14 +66,11 @@ databricks bundle deploy -t dev -p <your-profile>
 databricks bundle run   estate -t dev -p <your-profile>
 ```
 
-**Workspace notebook / web terminal** (`%sh` cell — replace `<you>` with your email):
-
-```sh
-%sh
-cd /Workspace/Users/<you>/databricks-estate-command-center
-databricks bundle deploy -t dev
-databricks bundle run   estate -t dev
-```
+**Workspace notebook (no CLI):** a `%sh databricks ...` cell doesn't work on serverless (the
+CLI there only runs in the web terminal). For a dev demo use the laptop
+CLI above. In a customer workspace, use the deploy cell from
+[CUSTOMER_DEPLOYMENT.md](CUSTOMER_DEPLOYMENT.md) Step ③ (the `customer` targets); it runs the
+bundled CLI for you, and works in workspaces that can't reach GitHub.
 
 > [!TIP]
 > `dev` is `mode: development`, so the app is name-prefixed with your username — deploy as

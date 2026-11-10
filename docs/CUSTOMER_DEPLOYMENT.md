@@ -20,25 +20,18 @@ compiled front-end ships with the code, so **nothing builds** — no Python, no 
 tools on your laptop. Everything below happens in the Databricks UI.
 
 > [!TIP]
-> **The 60-second version** — everything else on this page is just detail:
-> ```sh
-> %sh
-> cd /Workspace/Users/<you>/databricks-estate-command-center   # the Git folder from Step ①
-> databricks bundle deploy -t customer              # creates the app + jobs (Lakebase-backed)
-> databricks bundle run   estate -t customer        # starts it, prints the URL
-> ```
-> Run that in a notebook cell and the app comes up immediately. It ships in **live
-> mode**, so until you set your warehouse + gold schema (Step ②) and grant read access
-> (Step ④) it shows **demo data with a "finish setup to go live" banner** — it never
-> fails to start. Set those two values + the grant and it's reading your real estate.
+> **The short version:** download the repo ZIP from GitHub on your laptop, import it into your
+> workspace (Step ①), paste the deploy cell from Step ③ into a new notebook on Serverless, put your
+> warehouse and gold schema at the top, and run it. The cell deploys the app and both jobs, grants
+> the app its warehouse access, runs the gold job once and turns its nightly schedule on. Then run
+> the system-table grants (Step ④) in a `%sql` cell. Databricks never needs to reach GitHub, and
+> nothing runs on your laptop.
 
 > [!NOTE]
-> **The whole thing is six steps** — **①–⑤ are the required path; ⑥ is optional.**
-> ① add the code → ② set two values (warehouse + gold schema) → ③ run one deploy cell →
-> ④ grant read access → ⑤ turn on the daily jobs → ⑥ *(optional)* light up BU/team.
-> The app boots after ③ (showing demo data + a "finish setup" banner until ②/④ are done);
-> ②, ④ and ⑤ connect it to your real data. Throughout, anything in a **collapsed *FYI* /
-> *conditional* box is skippable** — the required steps are the plain, numbered ones.
+> **The whole thing is six steps**, and **①–⑤ are the required path; ⑥ is optional.**
+> ① import the code → ② choose your settings → ③ run the deploy cell → ④ grant read access
+> (SQL) → ⑤ check the daily jobs → ⑥ *(optional)* light up BU/team. Everything happens in the
+> workspace or in a notebook. Anything in a collapsed *FYI* / *conditional* box is skippable.
 
 ---
 
@@ -61,27 +54,28 @@ tools on your laptop. Everything below happens in the Databricks UI.
 
 ## Step ① — Add the code to your workspace
 
-Top-right of the workspace, click **Create ▾ → Git folder**. In **Git repository URL**
-paste:
+1. On your laptop, open https://github.com/beeyal/databricks-estate-command-center, click the
+   green **Code** button and choose **Download ZIP**. You get
+   `databricks-estate-command-center-main.zip`. You don't need to unzip it.
+2. In Databricks, open **Workspace**, go to your home folder, click the **⋮** menu (or right-click
+   the folder), choose **Import**, drop in the ZIP and click **Import**. If Databricks unpacks it
+   into a folder instead of keeping the ZIP, that works too.
+3. Click **⋮** next to the uploaded file (or folder) and choose **Copy URL/path → Full path**.
+   You'll paste this into the deploy cell as `REPO_PATH`.
 
-```
-https://github.com/beeyal/databricks-estate-command-center
-```
-
-Click **Create**. The code lands at `/Workspace/Users/<you>/databricks-estate-command-center`
-(where `<you>` is your own email). That's your copy — no download, no build.
-
-> [!NOTE]
-> The repo is public — no credentials needed to clone it. If your workspace can't reach
-> GitHub (locked-down networking), download the repo as a ZIP and import it instead.
+The ZIP includes the official Databricks CLI release (checksum-verified), which the deploy cell
+runs for you, so your workspace never needs to reach GitHub. You can also upload the ZIP to a
+Unity Catalog volume and use its `/Volumes/...` path. If you already have the repo as a Git
+folder, point `REPO_PATH` at that folder instead.
 
 ---
 
 ## Step ② — Set your configuration
 
-**There is one file to edit: `app.yaml`.** Open it in the Git folder. It's a list of
-`- name: … / value: …` pairs, each with a comment explaining what it does and what happens
-if you leave it blank.
+**You don't edit any files.** Every setting lives in `app.yaml` (a list of `- name: … /
+value: …` pairs, each with a comment explaining what it does and what happens if you leave it
+blank), but you set them in the deploy cell in Step ③, which writes them into `app.yaml` at
+deploy time. Keep that notebook: it holds your settings for every future upgrade.
 
 The app **ships in live mode** (`USE_LIVE: "true"`). Until you set the two values below it
 boots showing **demo data with a "finish setup to go live" banner** — so you can deploy
@@ -89,12 +83,9 @@ first and configure after, and it never fails to start.
 
 ### Set these **2** values to read your real estate (everything else can stay as-is):
 
-```yaml
-  - name: DATABRICKS_WAREHOUSE_ID
-    value: "<serverless-sql-warehouse-id>"     # a serverless SQL warehouse in THIS workspace
-
-  - name: FINOPS_GOLD_SCHEMA
-    value: "main.finops_gold"                  # catalog.schema the nightly job precomputes into
+```python
+WAREHOUSE_ID = ""                  # blank = the cell picks a serverless SQL warehouse you can use
+GOLD_SCHEMA  = "main.finops_gold"  # catalog.schema the nightly job precomputes into
 ```
 
 That's the whole required configuration. Deploy (Step ③), grant the app read access
@@ -121,7 +112,9 @@ That's the whole required configuration. Deploy (Step ③), grant the app read a
 
 ### Everything else is optional — leave it blank unless you want it
 
-Every other value in `app.yaml` has a safe default and its comment says what blank does.
+Every other value in `app.yaml` has a safe default and its comment says what blank does. To
+set one, add it to `APP_SETTINGS` in the deploy cell by its name, for example
+`APP_SETTINGS = {"FINOPS_CUSTOMER_NAME": "Acme", "FINOPS_FEATURE_GENIE": "false"}`.
 The common ones:
 
 - **`FINOPS_CUSTOMER_NAME`** — the label in the app header. Change to your company (cosmetic).
@@ -155,49 +148,77 @@ The common ones:
 > on** regardless of these flags; they call no model. Turning flags off never fabricates or
 > hides *data*, it only removes the optional surface itself.
 
-> [!WARNING]
-> `app.yaml`'s `env:` is a YAML **list**. Edit only the text inside the quotes on a
-> `value:` line — don't change the `- name:` keys, the `- `, or the indentation, and keep
-> every value quoted. If the app won't start after an edit, run `git checkout app.yaml` to
-> reset and re-edit just the value.
+> [!NOTE]
+> The cell writes your values into a scratch copy of `app.yaml` on the notebook's compute, so
+> the uploaded repo is never changed and a typo can't break the file. Values must be text, so
+> quote them (`"false"`, not `False`).
 
 ---
 
 ## Step ③ — Deploy it from a notebook
 
-Create a notebook (or open the workspace **web terminal**) and run one `%sh` cell —
-replace `<you>` with your email:
+Create a new notebook, click **Connect** (top right) and choose **Serverless**. Paste the cell
+below, fill in the values at the top (`REPO_PATH` is the path from Step ①), and run it:
 
-```sh
-%sh
-cd /Workspace/Users/<you>/databricks-estate-command-center
-databricks bundle deploy -t customer
-databricks bundle run   estate -t customer
+```python
+# ---- Estate Command Center: fill in these values, then run this cell -------------------
+REPO_PATH     = ""          # the uploaded databricks-estate-command-center-main.zip, or the folder it unpacked to
+WAREHOUSE_ID  = ""          # blank = use a serverless SQL warehouse you can access
+GOLD_SCHEMA   = ""          # catalog.schema the nightly job precomputes into, e.g. "main.finops_gold"
+TARGET        = "customer"  # "customer" (Lakebase for ack state) or "customer-delta" (Delta table)
+RUN_GOLD_SYNC = True        # run the gold job once now and turn its nightly schedule on
+APP_SETTINGS  = {}          # any other app.yaml setting by name, e.g. {"FINOPS_CUSTOMER_NAME": "Acme"}
+BUNDLE_VARS   = {}          # optional, e.g. {"app_name": "estate-command-center-2"}
+# -----------------------------------------------------------------------------------------
+import glob, os, subprocess, sys, tempfile, zipfile
+src = REPO_PATH.strip().rstrip("/")
+if src.endswith(".zip"):
+    unpacked = tempfile.mkdtemp(prefix="ecc_zip_")
+    zipfile.ZipFile(src).extractall(unpacked)
+    src = unpacked
+found = glob.glob(src + "/databricks.yml") + glob.glob(src + "/*/databricks.yml")
+if not found:
+    raise FileNotFoundError(f"Couldn't find the Estate Command Center repo at '{REPO_PATH}'. Check REPO_PATH.")
+repo = os.path.dirname(found[0])
+ctx = dbutils.notebook.entry_point.getDbutils().notebook().getContext()
+env = dict(os.environ, ECC_HOST=ctx.apiUrl().get(), ECC_TOKEN=ctx.apiToken().get())
+settings = {"DATABRICKS_WAREHOUSE_ID": WAREHOUSE_ID, "FINOPS_GOLD_SCHEMA": GOLD_SCHEMA, **APP_SETTINGS}
+args = [sys.executable, os.path.join(repo, "scripts", "notebook_deploy.py"), "--source", repo, "--target", TARGET]
+args += [x for k, v in settings.items() for x in ("--set", f"{k}={v}")]
+args += [x for k, v in BUNDLE_VARS.items() for x in ("--var", f"{k}={v}")] + (["--gold-sync"] if RUN_GOLD_SYNC else [])
+proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+for line in proc.stdout:
+    print(line, end="")
+if proc.wait() != 0:
+    raise RuntimeError("The deploy stopped with an error. The lines above say what went wrong.")
 ```
 
-This creates the app and the two scheduled jobs, then prints the app's
-URL. You don't sign in or paste a token — the notebook runs **as you**, so the deploy
-authenticates automatically. Open the printed URL and the app is live.
 
-**`-t customer` is the target to use.** It stores the acknowledge/dismiss state in a
-small managed Lakebase (Postgres) instance the bundle creates and wires for you —
-**nothing to configure.** (This adds one small always-on instance, ~tens of $/mo.)
+The output streams into the notebook. The cell deploys the app and the two scheduled jobs,
+starts the app, grants the app's service principal **CAN USE** on the warehouse, runs
+`estate-command-center-gold-sync` once and turns its nightly schedule on (`RUN_GOLD_SYNC`). The
+last lines print the app URL and the app's **service principal** ID, which you need for Step ④.
+You don't sign in or paste a token: the notebook runs **as you**.
+
+**`TARGET = "customer"` is the one to use.** It stores the acknowledge/dismiss state in a
+small managed Lakebase (Postgres) instance the bundle creates and wires for you,
+**nothing to configure.** (This adds one small always-on instance, ~tens of $/mo.) If that
+name is already taken in your workspace, set `BUNDLE_VARS = {"lakebase_instance": "<another name>"}`.
 
 <details>
 <summary><b>FYI — don't want a managed-Postgres instance?</b> (optional; skip if using the default)</summary>
 
 <br>
 
-Deploy with **`-t customer-delta`** instead of `-t customer`. Identical app, but the
+Set **`TARGET = "customer-delta"`** instead of `"customer"`. Identical app, but the
 acknowledge/dismiss state goes in a tiny **Delta** table via your warehouse — no extra
 infrastructure, no extra cost. On that target, in live mode, do the optional writeback
 grant listed under Step ④'s conditional grants (leave `FINOPS_WRITEBACK_SCHEMA` blank to
 reuse `FINOPS_GOLD_SCHEMA`; the app auto-creates the table). If it can't write, the app
 just hides the ack controls — it never loses a dismissal silently.
 
-To switch an already-deployed app between targets, run
-`databricks bundle deployment bind estate estate-command-center -t <target>` once first, so
-the bundle adopts the running app instead of erroring that it already exists.
+Pick the target once. Switching an app that is already deployed to the other target isn't
+supported from the deploy cell.
 
 </details>
 
@@ -205,23 +226,28 @@ the bundle adopts the running app instead of erroring that it already exists.
 
 ## Step ④ — Grant the app read access to your data
 
-**Find the app's service principal first.** Click the **app switcher** (top-left, next
-to the Databricks logo) → **Databricks Apps** → click **estate-command-center** in the
-Name column. On the app's **Overview** / **Authorization** tab you'll see its **service
-principal** — a client ID like `a1b2c3d4-…`. Copy it.
+**The app's service principal** is printed in the last lines of the deploy cell's output
+(a client ID like `a1b2c3d4-…`). Copy it.
 
-There are two required grants: **(a)** let the app use the warehouse (done in the workspace
-UI — it is **not** a SQL statement), and **(b)** read access to the system tables (SQL).
+There are two required grants: **(a)** let the app use the warehouse, and **(b)** read
+access to the system tables.
 
-**a. Let the app use the warehouse (UI, not SQL).** A SQL warehouse cannot be granted in
-the SQL editor. In the left nav open **SQL Warehouses**, click your warehouse, click the
-**Permissions** button (top-right), add the app's service principal, and give it **Can
-use**. If the SP still can't query, an admin should also tick the **Databricks SQL
-access** entitlement for it in workspace admin settings.
+**a. Let the app use the warehouse.** The deploy cell does this for you and prints
+`Granted the app CAN USE on warehouse …`. If it printed `Couldn't grant CAN USE` instead
+(you don't have CAN MANAGE on the warehouse), someone who does runs this in a notebook:
 
-**b. Grant read access to the system tables (SQL).** Open **SQL Editor** (left nav), paste
-the block below, replace `<app-sp>` with the service principal client ID, and click
-**Run**:
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service import sql
+WorkspaceClient().warehouses.update_permissions(
+    warehouse_id="<warehouse id>",
+    access_control_list=[sql.WarehouseAccessControlRequest(
+        service_principal_name="<app-sp>", permission_level=sql.WarehousePermissionLevel.CAN_USE)])
+```
+
+**b. Grant read access to the system tables (SQL).** In a notebook, add a cell that starts
+with `%sql`, paste the block below, replace `<app-sp>` with the service principal client ID,
+and run it (the SQL editor works too):
 
 ### Grant system-table access to the app service principal
 
@@ -386,8 +412,9 @@ that don't apply to you**; most deployments need none of them.
 
 ## Step ⑤ — Turn on the scheduled jobs
 
-In **Jobs & Pipelines**, unpause the jobs (both ship paused). **Every redeploy pauses them
-again**, so unpause them after each upgrade too:
+Both jobs ship paused, and every deploy pauses them again. With `RUN_GOLD_SYNC = True` the
+deploy cell runs gold-sync once and turns its nightly schedule back on every time, so there is
+nothing to do for it after an upgrade:
 
 - **`estate-command-center-gold-sync`** (nightly; `finops_gold_sync` in `databricks.yml`; the
   prefix is your `app_name`) — **required for live mode.** Precomputes every estate
@@ -396,7 +423,7 @@ again**, so unpause them after each upgrade too:
   `finops_gold_warehouse_daily` and `finops_gold_cluster_daily` (the last two are daily-grain
   history that power the Warehouse Monitor / Cluster Efficiency time filters beyond system-table
   retention) — so the app serves each page in ~1s instead of re-scanning account-wide system
-  tables per request. **Run it once manually right after unpausing** so the app has data to
+  tables per request. The deploy cell runs it once straight away so the app has data to
   serve (otherwise live pages read empty until the first nightly run). Its service principal
   needs: **`Can use` on the SQL warehouse + the `Databricks SQL access` entitlement** (the job
   runs all its SQL through that warehouse), read on the system tables the app reads, **`CREATE`
@@ -410,7 +437,20 @@ again**, so unpause them after each upgrade too:
   read-only app SP above — with **`Can use` on the SQL warehouse + `Databricks SQL access`**
   (it also runs its writes through the warehouse) and **`CREATE` on the catalog + `MODIFY` on
   `ingest_schema`** (the job auto-creates the schema; it writes the `<ingest_schema>.finops_admin`
-  Delta table). Use **Run as** on the job, or set `FINOPS_JOB_RUN_AS`.
+  Delta table). To turn it on, run this in a notebook with that service principal's ID:
+
+  ```python
+  from databricks.sdk import WorkspaceClient
+  from databricks.sdk.service.jobs import CronSchedule, JobRunAs, JobSettings, PauseStatus
+  w = WorkspaceClient()
+  job = next(w.jobs.list(name="estate-command-center-admin-sync"))
+  w.jobs.update(job_id=job.job_id, new_settings=JobSettings(
+      run_as=JobRunAs(service_principal_name="<admin-sp>"),
+      schedule=CronSchedule(quartz_cron_expression="0 0 2 * * ?", timezone_id="UTC",
+                            pause_status=PauseStatus.UNPAUSED)))
+  ```
+
+  A deploy pauses it again, so rerun that snippet after each upgrade if you use admin-sync.
 
 > [!NOTE]
 > Until admin-sync has run, those specific panels show a "run the daily job" prompt (and a
@@ -427,7 +467,7 @@ again**, so unpause them after each upgrade too:
 brew install databricks                                  # macOS (winget install Databricks.CLI on Windows)
 git clone https://github.com/beeyal/databricks-estate-command-center && cd databricks-estate-command-center
 databricks auth login --profile <name>                   # browser prompt
-# edit app.yaml as in Step ②
+# edit app.yaml (the values in Step ②) before deploying
 databricks bundle deploy -t customer -p <name>
 databricks bundle run   estate -t customer -p <name>
 ```
@@ -463,15 +503,12 @@ It's a 2-minute copy-paste:
    **Grant the `estate-command-center-gold-sync` job's service principal too** — in live mode the
    team join runs when that (required) job precomputes the adoption payload (see the
    note below).
-3. **Point the app at them** — in the **same `app.yaml`** you edited in Step ②, fill in the
-   `value:` for these two entries (they're already there, blank):
-   ```yaml
-     - name: FINOPS_WORKSPACE_BU_TABLE
-       value: "main.finops_ref.workspace_bu"
-     - name: FINOPS_USER_TEAM_TABLE
-       value: "main.finops_ref.user_team"
+3. **Point the app at them**: add them to `APP_SETTINGS` in your deploy cell from Step ③:
+   ```python
+   APP_SETTINGS = {"FINOPS_WORKSPACE_BU_TABLE": "main.finops_ref.workspace_bu",
+                   "FINOPS_USER_TEAM_TABLE": "main.finops_ref.user_team"}
    ```
-4. **Redeploy** — re-run the same deploy cell from Step ③.
+4. **Redeploy**: run the deploy cell again.
 
 > [!NOTE]
 > **When the values appear:** the BU facet and Team column switch on **immediately**
@@ -527,31 +564,32 @@ deterministic text.
 
 ## Upgrades
 
-Pull the latest code into the Git folder and re-run the deploy cell
-(`databricks bundle deploy -t customer` then `databricks bundle run estate -t customer`).
-Your settings live in `app.yaml`, outside the code, so an upgrade never disturbs them.
-Use the same target you originally deployed (`-t customer` or `-t customer-delta`).
+Download the repo ZIP again (Step ①), import it in place of the old one, and run your deploy
+notebook again with the same values. Your settings live in the cell, so an upgrade never
+disturbs them. Keep the same `TARGET` you originally deployed with. The cell updates the app
+and both jobs, runs gold-sync once and turns its nightly schedule back on.
+
+**Moving from a Git-folder deploy:** copy the values you changed in your Git folder's
+`app.yaml` into the cell (`WAREHOUSE_ID`, `GOLD_SCHEMA`, and anything else into `APP_SETTINGS`),
+or point `REPO_PATH` at the Git folder itself, and keep the same target. The deploy updates the
+existing app and jobs in place.
 
 **Upgrading from a release before October 2026** (check: no **Pipelines** tab):
 
-1. In the workspace Git folder, **pull** the latest `main` (Git folder → branch menu → Pull).
-   The built frontend is committed, so there is nothing to build.
-2. Re-run the deploy cell (`bundle deploy` + `bundle run estate`) with your existing target.
-   This updates the app **and both jobs**: the jobs run the Python files the deploy uploads,
-   so they pick up the new code too.
-   **The deploy also puts both job schedules back to paused**, because `databricks.yml`
-   ships them paused and a deploy resets each job to the bundle's definition. Unpause
-   `estate-command-center-gold-sync` again in **Jobs & Pipelines** afterwards, plus
-   `estate-command-center-admin-sync` if you use it. If you forget, the manual run below
-   still works, but the nightly rebuild stops and pages go stale from the next day.
-3. **Run the new grants** (step ④): the Data Quality grant is now on the **table**
-   (`GRANT SELECT ON TABLE system.data_quality_monitoring.table_results …`). The old
+1. Download the new ZIP and import it (Step ①). The built frontend is included, so there is
+   nothing to build.
+2. **Run the new grants** (step ④) in a `%sql` cell: the Data Quality grant is now on the
+   **table** (`GRANT SELECT ON TABLE system.data_quality_monitoring.table_results …`). The old
    schema-level version fails by design. Optionally, also grant `system.serving` for the
    AI $ **Who is calling** section.
-4. **Run `estate-command-center-gold-sync` once**, after the grants so it can read the new
-   tables. Snapshots written by the older version are detected and recomputed on first
-   use, so nothing breaks in the meantime — it's just slower until the job has run.
-5. Optional new settings in `app.yaml` (all blank by default, all safe to leave blank):
+3. Run the deploy cell with your existing target and `RUN_GOLD_SYNC = True`. This updates the
+   app **and both jobs** (the jobs run the Python files the deploy uploads, so they pick up the
+   new code too), then runs gold-sync once, after the grants, and turns its nightly schedule
+   back on. A deploy always resets both schedules to paused, so if you use admin-sync, rerun its
+   snippet from step ⑤. Snapshots written by the older version are detected and recomputed on
+   first use, so nothing breaks in the meantime.
+4. Optional new settings (all blank by default, all safe to leave blank; set them in
+   `APP_SETTINGS` in the deploy cell):
 
    | Setting | What it does |
    |---|---|
@@ -571,9 +609,9 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
 > Governance tabs serve the **nightly precomputed gold snapshot**, not a live scan — so a
 > new release that changes how those tabs compute their numbers only takes effect once the
 > gold job rebuilds with the new code. Redeploying the app alone updates the code but keeps
-> serving the *previous* snapshot until the next scheduled run. Trigger `estate-command-center-gold-sync`
-> manually after upgrading (or wait for the nightly run) so every tab reflects the new
-> version. (The live-scan tabs — Warehouses, Clusters, Query Advisor, Genie $, AI $ — pick
+> serving the *previous* snapshot until the next scheduled run. The deploy cell does this when `RUN_GOLD_SYNC = True`.
+> If you deployed with it off, run the job once from a notebook so every tab reflects the new
+> version: `from databricks.sdk import WorkspaceClient; w = WorkspaceClient(); w.jobs.run_now(job_id=next(w.jobs.list(name="estate-command-center-gold-sync")).job_id)`. (The live-scan tabs — Warehouses, Clusters, Query Advisor, Genie $, AI $ — pick
 > up the new code on the app restart alone; only bump `FINOPS_CACHE_VERSION` if you want to
 > force-drop their cached payloads immediately instead of waiting out the 1-hour TTL.)
 
@@ -594,10 +632,10 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
 | Symptom | Fix |
 |---|---|
 | A tab shows a 503 / "read failed" | The warehouse is stopped, or a grant is missing — the message names the exact object. Re-run the grant from step ④. |
-| App shows demo data + a "finish setup to go live" banner | Live mode is on but the warehouse and/or gold schema aren't set yet, so the app fell back to demo (it never fails to start). Set `DATABRICKS_WAREHOUSE_ID` + `FINOPS_GOLD_SCHEMA` in `app.yaml` (step ②), redeploy, grant read access (step ④), and run `estate-command-center-gold-sync` once (step ⑤). For a read-only eval with no writable schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` (slow; not for production). |
+| App shows demo data + a "finish setup to go live" banner | Live mode is on but the warehouse and/or gold schema aren't set yet, so the app fell back to demo (it never fails to start). Set `WAREHOUSE_ID` + `GOLD_SCHEMA` in the deploy cell (step ②), grant read access (step ④), and run the cell again with `RUN_GOLD_SYNC = True`. For a read-only eval with no writable schema, set `FINOPS_ALLOW_LIVE_NO_GOLD: "true"` (slow; not for production). |
 | Live mode on + configured, but pages are empty | Confirm `DATABRICKS_WAREHOUSE_ID` **and** `FINOPS_GOLD_SCHEMA` are set, that you re-ran the deploy cell, and that you **ran `estate-command-center-gold-sync` once** (step ⑤) — live pages serve from gold, which is empty until the first run. |
-| Data stopped refreshing after an upgrade or redeploy (figures stuck on an earlier day) | A redeploy resets both job schedules to **paused** (that's how `databricks.yml` ships them). Unpause `estate-command-center-gold-sync` (and admin-sync if you use it) in **Jobs & Pipelines** again after every deploy. |
-| Governance / Access group panels show "run the daily job" | Unpause **estate-command-center-admin-sync** (step ⑤) and let it run once. |
+| Data stopped refreshing after an upgrade or redeploy (figures stuck on an earlier day) | A redeploy resets both job schedules to **paused** (that's how `databricks.yml` ships them). Run the deploy cell with `RUN_GOLD_SYNC = True`, which turns gold-sync's schedule back on, and rerun the admin-sync snippet from step ⑤ if you use it. |
+| Governance / Access group panels show "run the daily job" | Turn on **estate-command-center-admin-sync** with the snippet in step ⑤ and let it run once. |
 | **Acknowledge / Reopen buttons do nothing** (or the ack controls disappeared) after you **deleted + recreated** the app | A recreated app gets a **new service principal**, which cannot use the previous SP's writeback schema (Delta: "permission denied"; Lakebase: "permission denied for schema …"). The app now reports writeback **off** with the reason rather than failing silently. **Fix:** for the Lakebase backend set a **fresh** `FINOPS_LAKEBASE_SCHEMA` (e.g. `estate2`) so the new SP creates + owns its own schema, then redeploy; for the Delta backend re-run the `GRANT CREATE, MODIFY ON SCHEMA <writeback-schema> TO \`<new-app-service-principal>\`` from step ④ with the new SP. |
 | Pages slow | Confirm the `estate-command-center-gold-sync` job actually ran **and its output shows `ok`** for each key (step ⑤) — `skipped (kept previous snapshot)` names the failing read; the app serves from the precomputed gold tables, so a page is only slow if gold is missing/stale or you enabled the `FINOPS_ALLOW_LIVE_NO_GOLD` eval escape hatch. Use a serverless SQL warehouse (Small or larger) for the app. The first load after a redeploy can take longer while the cache warms; after that tab switches and filters are served from memory. |
 | `GRANT … ON SCHEMA system.data_quality_monitoring` fails with **"User does not have MANAGE on Schema"** — even for an account + metastore admin | Expected: Databricks owns that schema and only gives admins MANAGE on the **table**. Run `GRANT SELECT ON TABLE system.data_quality_monitoring.table_results TO \`<app-sp>\`` instead (SQL, or the table's Permissions dialog — the schema's Permissions button is greyed out). |
@@ -605,7 +643,7 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
 | A tab keeps showing an old error after you fixed a grant | Older versions cached the error (in memory for an hour, and in the nightly snapshot until the next run). Current versions retry within a minute and never snapshot an error; on an older version, re-run `estate-command-center-gold-sync` and restart the app. |
 | AI $ doesn't list some people who use AI | Genie (Spaces and Genie Code) is on the **Genie $** tab, and the Databricks Assistant isn't metered. For model-serving / Foundation Model API callers, grant `system.serving` (step ④) so **Who is calling** can read `endpoint_usage`. The window is month to date. |
 | **Tables** shows far fewer tables than you have | Two causes. (1) `system.information_schema.tables` only lists tables the app's service principal can see — grant `BROWSE` per catalog (see "widen the Access page" in step ④; BROWSE shows metadata, not data). (2) Older versions read at most 200 tables; current versions read up to 25,000 (`FINOPS_TABLES_LIMIT`) and show the top 500 with **Load all**. Re-run `estate-command-center-gold-sync` after upgrading. Sizes come from the nightly census, which only covers tables the job's SP can `DESCRIBE DETAIL`. |
-| The **platform × environment** grid is missing, shows an explanation, or puts workspaces in the wrong environment | The app reads platform and environment from the workspace name unless told otherwise. Add `platform` and `environment` columns to your workspace mapping table (see [`reference/mapping_tables_setup.sql`](../reference/mapping_tables_setup.sql)) for workspaces whose names don't follow the convention, or set `FINOPS_WORKSPACE_GROUPS` / `FINOPS_ENV_TIERS` in `app.yaml`. Mapping-table values always win. |
+| The **platform × environment** grid is missing, shows an explanation, or puts workspaces in the wrong environment | The app reads platform and environment from the workspace name unless told otherwise. Add `platform` and `environment` columns to your workspace mapping table (see [`reference/mapping_tables_setup.sql`](../reference/mapping_tables_setup.sql)) for workspaces whose names don't follow the convention, or set `FINOPS_WORKSPACE_GROUPS` / `FINOPS_ENV_TIERS` in `APP_SETTINGS` in the deploy cell. Mapping-table values always win. |
 | Can't find the cost of a pipeline / materialized view | Use the **Pipelines** tab — MV/ST refreshes are billed with a pipeline id (often under the SQL product), so they're not on Jobs or Query Advisor. |
 | No **BU** facet / no **Team** column | Those are optional (step ⑥). Create the mapping tables from [`reference/mapping_tables_setup.sql`](../reference/mapping_tables_setup.sql), set `workspace_bu_table` / `user_team_table`, grant the app SP `SELECT`, and redeploy. |
 | "Workspace has reached the maximum limit of 300 apps" | The target workspace is full — deploy to another workspace. System-table billing is account-wide, so any workspace in the account sees the same usage. |

@@ -1,0 +1,3 @@
+# Keep GitHub's "Download ZIP" under the 50 MB workspace import limit: the screenshots stay on
+# GitHub but aren't needed to deploy, so they're left out of the ZIP.
+docs/screenshots/** export-ignore
