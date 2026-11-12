@@ -37,8 +37,15 @@ CAVEATS = [
     "Endpoint + owner come from usage_metadata.endpoint_name and identity_metadata; where an endpoint is shared the owner is the creator, not every caller.",
     "The Databricks Assistant is not metered and does not appear here. Genie (Spaces and Genie Code) is billed as its own product — see the Genie $ tab, not this one.",
     "'Who is calling' comes from system.serving.endpoint_usage (every request's caller, including shared pay-per-token endpoints). Its $ is an ESTIMATE: each endpoint's billed cost split across its callers by token share.",
-    "$ is list-price reference (usage_quantity x pricing.effective_list.default); the Account Console is the source of truth. Provisioned-throughput endpoints bill whether or not they serve traffic.",
+    "Provisioned-throughput endpoints bill whether or not they serve traffic.",
 ]
+
+
+def caveats() -> list[str]:
+    """The caveats with the price-basis line for the current discount setting.
+    Called at response time so a gold snapshot never carries a stale basis."""
+    from data.config import price_basis_note
+    return [*CAVEATS, price_basis_note()]
 
 # Seeded serving endpoints / AI workloads: (name, product, workspace, owner,
 # monthly_dbus, mode, gpu, scale_to_zero). $ is derived from a per-product $/DBU.
@@ -223,7 +230,7 @@ def assemble(rows_all: list[dict[str, Any]], workspace: str | None = None,
             "gpu_usd_month": gpu_usd,
             "flagged_savings_usd_month": round(sum(f["saving_usd_month"] for f in flags), 2),
         },
-        "caveats": CAVEATS,
+        "caveats": caveats(),
     }
 
 

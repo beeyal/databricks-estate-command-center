@@ -1,4 +1,4 @@
-import { useCurrency } from "../../store/appStore";
+import { priceBasis, useCurrency } from "../../store/appStore";
 import { useApi } from "../../hooks/useApi";
 import { fetchJobDetail } from "../../api/client";
 import { InfoTip } from "../shared/InfoTip";
@@ -90,8 +90,8 @@ export function JobDetail({ job }: { job: JobRow }) {
 
       {/* Stat tiles */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-2">
-        <StatTile label="Cost / mo" value={fmtMoney(job.cost_usd_month, cur, { compact: true })} tone="accent" info="Monthly list-price cost attributed to this job (DBUs consumed × effective list rate). Live mode: only jobs-compute + serverless jobs carry job-attributed billing." />
-        <StatTile label="Cost / run" value={fmtMoney(job.cost_per_run, cur)} info="Monthly cost ÷ runs — the average list-price cost of a single run." />
+        <StatTile label="Cost / mo" value={fmtMoney(job.cost_usd_month, cur, { compact: true })} tone="accent" info={`Monthly cost attributed to this job (DBUs consumed × list rate, ${priceBasis(cur)}). Live mode: only jobs-compute + serverless jobs carry job-attributed billing.`} />
+        <StatTile label="Cost / run" value={fmtMoney(job.cost_per_run, cur)} info={`Monthly cost ÷ runs — the average cost of a single run (${priceBasis(cur)}).`} />
         <StatTile label="MoM cost Δ" value={Math.abs(job.mom_cost_pct) < 0.005 ? "flat" : `${job.mom_cost_pct > 0 ? "+" : "−"}${fmtPct(Math.abs(job.mom_cost_pct))}`} tone={job.mom_cost_pct > 0.005 ? "danger" : job.mom_cost_pct < -0.005 ? "success" : "neutral"} info="Month-over-month change in this job's cost (exact, from the 6-month cost trend)." />
         <StatTile label="Failed-run $ / mo" value={fmtMoney(job.failed_run_cost_usd_month, cur, { compact: true })} tone="danger" info="Estimated cost of failed runs this month (failed runs × avg cost/run). An estimate — actual waste is at or below this since failed runs often die mid-execution." />
         <StatTile label="Runs (30d)" value={job.runs.toLocaleString("en-AU")} info="Terminal job runs in the last 30 days." />
@@ -135,7 +135,7 @@ export function JobDetail({ job }: { job: JobRow }) {
           <div>
             <div className="text-xs uppercase tracking-wide text-neutral mb-1 flex items-center gap-1.5">
               Cost — last 6 months
-              <InfoTip text="Monthly list-price cost for this job over time. Useful for catching jobs growing in cost." />
+              <InfoTip text={`Monthly cost for this job over time (${priceBasis(cur)}). Useful for catching jobs growing in cost.`} />
             </div>
             {costTrend.length >= 2 ? (
               <Sparkline data={costTrend} width={180} height={34} />

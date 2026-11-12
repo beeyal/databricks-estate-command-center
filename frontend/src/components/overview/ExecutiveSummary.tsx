@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { postExecSummary } from "../../api/client";
 import { useCurrency, useFeatures, useAppStore } from "../../store/appStore";
-import { fmtMoney, fmtNum, fmtPct } from "../shared/format";
+import { fmtMoney, fmtMoneyText, fmtNum, fmtPct } from "../shared/format";
 import { InfoTip } from "../shared/InfoTip";
 import type { ExecSummary, Overview, PageId } from "../../types";
 
@@ -151,7 +151,9 @@ export function ExecutiveSummary({ ov, onGoto }: { ov: Overview; onGoto: (tab: P
   const useAi = ai?.status === "ok" && ai.narrative;
   // While the AI call is in flight, don't flash the baseline then swap — show a
   // loading placeholder. If AI failed/unavailable, fall back to the baseline.
-  const paragraphs = (useAi ? ai!.narrative : baseline).split("\n\n").filter(Boolean);
+  // The AI narrative quotes the backend's list-price USD figures, so restate them
+  // in the active currency + discount; the baseline is already built with fmtMoney.
+  const paragraphs = (useAi ? fmtMoneyText(ai!.narrative, cur) : baseline).split("\n\n").filter(Boolean);
 
   return (
     <div className="card flex flex-col lg:flex-row gap-5">

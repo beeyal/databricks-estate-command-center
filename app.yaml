@@ -137,11 +137,12 @@ env:
   # ════════════════════════════════════════════════════════════════════════
 
   # ── Effective cost ─────────────────────────────────────────────────
-  # The app's figures are LIST price. Set your blended committed-use / reservation
-  # discount as a fraction (e.g. "0.30" = 30% off) and every $ also shows effective
-  # cost (list × (1 − discount)) with the assumptions stated. BLANK/"0" ⇒ list only
-  # (the app never invents an effective number). Azure VM/infra cost is NOT here —
-  # that's an Azure Cost Management reconciliation, surfaced as an explicit caveat.
+  # Blank, every $ in the app is LIST price. Set your blended Databricks discount
+  # as a fraction (e.g. "0.37" = 37% off) and every $ figure switches to effective
+  # cost (list × (1 − discount)): KPIs, tables, charts, recommendation formulas and
+  # Genie answers, with each page saying which basis it shows. Takes effect on the
+  # next app restart; no gold re-run needed. Azure VM/infra cost (and Azure
+  # reservation savings) are NOT here: they live in Azure Cost Management.
   - name: FINOPS_EFFECTIVE_DISCOUNT
     value: ""
 

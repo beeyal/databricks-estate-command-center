@@ -1,16 +1,18 @@
 import { create } from "zustand";
-import type { CurrencyOption, Features, PageId } from "../types";
+import type { ActiveCurrency, CurrencyOption, Features, PageId } from "../types";
 
 // Default flags used before /api/config resolves. Genie + DQM default on;
 // ai_narration off — matches the backend default contract (data/config.py).
 const DEFAULT_FEATURES: Features = { genie: true, ai_narration: false, dqm: true, writeback: true };
 
-// Dual-currency (SPEC §9). USD is the source-of-truth list price; AUD is an
-// indicative conversion at a configurable FX rate. The selection persists in
+// Dual-currency (SPEC §9). The backend's USD figures are list price; AUD is an
+// indicative conversion at a configurable FX rate. A configured effective
+// discount (FINOPS_EFFECTIVE_DISCOUNT) is applied on top in useCurrency, so it
+// reaches every $ in the UI the same way the FX rate does. The selection persists in
 // localStorage so it survives reloads and applies across every page.
 const CURRENCY_KEY = "finops-currency";
 const DEFAULT_CURRENCIES: CurrencyOption[] = [
-  { code: "USD", symbol: "$", rate: 1.0, label: "USD (list price)" },
+  { code: "USD", symbol: "$", rate: 1.0, label: "USD" },
   { code: "AUD", symbol: "A$", rate: 1.52, label: "AUD (× FX)" },
 ];
 
@@ -126,10 +128,32 @@ export function useTeamEnabled(): boolean {
   return useAppStore((s) => s.teamEnabled);
 }
 
-// Convenience hook: returns the active currency option + a USD→display formatter.
-export function useCurrency() {
+// Convenience hook: the active currency, with the configured effective discount
+// folded into `rate`. Every $ in the UI goes through fmtMoney(usd, cur) or a
+// chart scaled by cur.rate, so applying the discount here makes every figure
+// effective cost when one is set, and leaves them at list price when it's 0.
+export function useCurrency(): ActiveCurrency {
   const currency = useAppStore((s) => s.currency);
   const currencies = useAppStore((s) => s.currencies);
+  const discount = useAppStore((s) => s.effectiveDiscount);
   const opt = currencies.find((c) => c.code === currency) ?? currencies[0] ?? DEFAULT_CURRENCIES[0];
-  return opt;
+  const d = Number.isFinite(discount) && discount > 0 ? discount : 0;
+  return { ...opt, fx: opt.rate, discount: d, rate: opt.rate * (1 - d) };
+}
+
+// Short wording for the price basis, for hints and InfoTips: "list price", or
+// "after your 37% discount" when an effective discount is configured.
+export function priceBasis(cur: ActiveCurrency): string {
+  return cur.discount > 0 ? `after your ${Math.round(cur.discount * 1000) / 10}% discount` : "list price";
+}
+
+// The same, for a full sentence ("Figures are …"): "list price", or
+// "effective cost, after your 37% discount".
+export function priceBasisLong(cur: ActiveCurrency): string {
+  return cur.discount > 0 ? `effective cost, ${priceBasis(cur)}` : "list price";
+}
+
+// Column / tile label for a cost figure: "List $" or "Effective $".
+export function costLabel(cur: ActiveCurrency): string {
+  return cur.discount > 0 ? "Effective $" : "List $";
 }

@@ -2,7 +2,7 @@ import { InfoTip } from "../shared/InfoTip";
 import { Metric } from "../shared/StatTile";
 import { Pill } from "../shared/Pill";
 import { fmtMoney, fmtNum, fmtPct, fmtBytes, fmtSeconds, fmtGb } from "../shared/format";
-import { useCurrency } from "../../store/appStore";
+import { priceBasis, useCurrency } from "../../store/appStore";
 import type { WarehouseRow, WarehouseAdvice } from "../../types";
 
 // Human label + tone for each advice recommendation. Tone drives the badge
@@ -93,7 +93,7 @@ export function WarehouseDetail({ row }: { row: WarehouseRow }) {
             <Metric label="Users" value={String(row.distinct_users)} info="Distinct users who ran a query on this warehouse." />
             <Metric label="Peak concurrency" value={String(row.peak_concurrency)} info="Highest number of queries running at once — drives how much the warehouse must scale out." />
             <Metric label="Auto-stop" value={row.auto_stop_mins ? `${row.auto_stop_mins}m` : "off"} tone={row.auto_stop_mins === 0 ? "text-warning" : ""} info="Idle timeout before the warehouse stops. 'off' means it keeps billing while idle." />
-            <Metric label="Cost / mo" value={fmtMoney(row.cost_usd_month, cur, { compact: true })} info="Estimated monthly list-price cost of this warehouse." />
+            <Metric label="Cost / mo" value={fmtMoney(row.cost_usd_month, cur, { compact: true })} info={`Estimated monthly cost of this warehouse (${priceBasis(cur)}).`} />
           </div>
         </div>
         {row.timeline.length > 0 && (

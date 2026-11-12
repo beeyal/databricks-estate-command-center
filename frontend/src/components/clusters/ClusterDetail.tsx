@@ -1,7 +1,7 @@
 import { InfoTip } from "../shared/InfoTip";
 import { Metric } from "../shared/StatTile";
 import { fmtMoney, fmtNum, fmtPct } from "../shared/format";
-import { useCurrency } from "../../store/appStore";
+import { priceBasis, useCurrency } from "../../store/appStore";
 import type { ClusterRow } from "../../types";
 
 // 24-bucket CPU-by-hour sketch. Low bars across the day = under-utilised.
@@ -48,7 +48,7 @@ export function ClusterDetail({ row, win = "30d" }: { row: ClusterRow; win?: str
             <Metric label={`Idle time (${win})`} value={fmtPct(row.idle_frac)} tone={row.idle_frac >= 0.35 ? "text-warning" : ""} info={`Fraction of uptime the cluster was effectively idle (near-zero CPU) over the last ${win}.`} />
             {row.uptime_hours_month > 0 && <Metric label={`Uptime (${win})`} value={`${fmtNum(row.uptime_hours_month)}h`} info={`Hours the cluster was running over the last ${win}.`} />}
             {row.dbus_month > 0 && <Metric label={`DBUs (${win})`} value={fmtNum(row.dbus_month, { compact: true })} info={`Databricks Units consumed over the last ${win}.`} />}
-            <Metric label={`Cost (${win})`} value={fmtMoney(row.cost_usd_month, cur, { compact: true })} info={`Estimated list-price cost of this cluster over the last ${win}.`} />
+            <Metric label={`Cost (${win})`} value={fmtMoney(row.cost_usd_month, cur, { compact: true })} info={`Estimated cost of this cluster over the last ${win} (${priceBasis(cur)}).`} />
           </div>
         </div>
         {row.cpu_timeline.length > 0 && (

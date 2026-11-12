@@ -1,7 +1,7 @@
 import { fetchGenieCost } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
-import { useCurrency } from "../../store/appStore";
-import { fmtMoney, fmtNum } from "../shared/format";
+import { costLabel, useCurrency } from "../../store/appStore";
+import { fmtMoney, fmtNum, fmtPct } from "../shared/format";
 import { LoadingCard, ErrorCard } from "../layout/PageShell";
 import { InfoTip } from "../shared/InfoTip";
 import type { GenieCost } from "../../types";
@@ -130,7 +130,7 @@ export function GenieSpendCard({
           <InfoTip text="Genie DBU spend split by surface (usage_metadata.genie.surface): Genie Code = SQL editor / notebook, Genie One = Databricks One chat, Genie Agents = Agent Bricks. Attributed per workspace and user from billing data (billing_origin_product='GENIE'). No model is called." />
         </h3>
         <span className="text-xs text-neutral tabular-nums">
-          {fmtMoney(gc.summary.total_list_cost_usd, cur, { compact: true })} list ·{" "}
+          {fmtMoney(gc.summary.total_list_cost_usd, cur, { compact: true })} {cur.discount > 0 ? "effective" : "list"} ·{" "}
           {fmtMoney(gc.summary.paid_list_cost_usd, cur, { compact: true })} paid ·{" "}
           {gc.summary.distinct_users} users · {gc.month}
         </span>
@@ -161,7 +161,7 @@ export function GenieSpendCard({
               </th>
               <th className="py-1.5 pr-3 font-medium text-right">DBUs</th>
               <th className="py-1.5 pr-3 font-medium text-right">
-                <span className="inline-flex items-center gap-1">List $<InfoTip text="Cost at published list price (DBUs times effective list rate), before any discount or free allowance." /></span>
+                <span className="inline-flex items-center gap-1">{costLabel(cur)}<InfoTip text={cur.discount > 0 ? `Cost at list price (DBUs times list rate) less your ${fmtPct(cur.discount)} discount, before any free allowance.` : "Cost at published list price (DBUs times list rate), before any discount or free allowance."} /></span>
               </th>
               <th className="py-1.5 font-medium text-right">
                 <span className="inline-flex items-center gap-1">Paid $<InfoTip text="Estimated billable cost after the 150 free Genie DBUs per user per month (shared across surfaces, from 6 Jul 2026) are deducted." /></span>

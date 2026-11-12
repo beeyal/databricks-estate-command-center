@@ -16,7 +16,13 @@ from typing import Any
 from data import generate_demo as demo
 from data import genie_cost
 
-CAVEAT = "List-price reference (USD × effective_list.default); the Account Console is the source of truth for billed spend."
+def _caveat() -> str:
+    from data.config import price_basis_note
+    return price_basis_note()
+
+
+# Kept as a module attribute for callers that read it directly (app.py).
+CAVEAT = _caveat()
 
 # The four suggested-prompt chips from SPEC §11 (kept in sync with the banner).
 SUGGESTED_PROMPTS = [
@@ -41,7 +47,7 @@ def _top_bu_by_query_cost() -> dict[str, Any]:
     values = [round(c) for _, c in ranked]
     text = (
         f"Over the trailing window, **{top}** ran the most expensive queries at "
-        f"about ${top_cost:,.0f} in list-price compute — the top cost driver among teams. "
+        f"about ${top_cost:,.0f} in compute — the top cost driver among teams. "
         f"The next highest are {', '.join(labels[1:3])}. "
         "Most of the spend concentrates in a handful of heavy, low-pruning statements; "
         "a governed Genie Space plus a query-timeout cluster policy would curb the worst offenders. "
@@ -101,13 +107,13 @@ def _genie_code_vs_spaces(question: str) -> dict[str, Any]:
             agg[r["label"]] = agg.get(r["label"], 0.0) + r["total_list_cost_usd"]
         pairs = sorted(agg.items(), key=lambda kv: -kv[1])
         summary = ", ".join(f"{lbl} ≈ ${v:,.0f}" for lbl, v in pairs) or "no Genie usage"
-        text = f"For **{user}** this month by surface: {summary} (list-price DBUs). " + split_note + CAVEAT
+        text = f"For **{user}** this month by surface: {summary} (from billed DBUs). " + split_note + CAVEAT
         labels = [lbl for lbl, _ in pairs]
         values = [round(v) for _, v in pairs]
     else:
         st = payload["surface_totals"]
         summary = ", ".join(f"{s['label']} ≈ ${s['list_usd']:,.0f}" for s in st) or "no Genie usage"
-        text = f"Estate-wide this month by surface: {summary} (list-price DBUs). " + split_note + CAVEAT
+        text = f"Estate-wide this month by surface: {summary} (from billed DBUs). " + split_note + CAVEAT
         labels = [s["label"] for s in st]
         values = [round(s["list_usd"]) for s in st]
     return {

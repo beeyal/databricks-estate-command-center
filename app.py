@@ -568,6 +568,7 @@ _GOLD_CURRENT = {
     "ai-cost": lambda p: isinstance(p, dict) and "callers" in p,
     "jobs": lambda p: isinstance(p, dict) and _first_row_has(p, "jobs", "last_run"),
     "hub": lambda p: isinstance(p, dict) and "bu_of_ws" in p,
+    "pipelines": lambda p: isinstance(p, dict) and ("type_inference" in p or not p.get("pipelines")),
 }
 
 
@@ -665,6 +666,17 @@ def _platform_total() -> float | None:
     return float(demo.get_overview().get("total_spend_usd_month", 0) or 0)
 
 
+def _fresh_caveats(env: dict, caveats: list[str]) -> dict:
+    """Replace a response envelope's caveats with the current ones, WITHOUT
+    mutating a shared cached dict. A gold or cached snapshot keeps the caveat
+    text from when it was built, so the price-basis line (list vs effective)
+    would go stale after FINOPS_EFFECTIVE_DISCOUNT changes."""
+    data = env.get("data")
+    if isinstance(data, dict):
+        return {**env, "data": {**data, "caveats": caveats}}
+    return env
+
+
 def _attach_platform_total_env(env: dict) -> dict:
     """Attach total_platform_spend_usd_month to a cached response envelope's data,
     WITHOUT mutating the shared cached dict (shallow-copy data first), and only when
@@ -733,7 +745,7 @@ def get_config() -> dict[str, Any]:
         # Dual-currency toggle config (SPEC §9). USD is the source-of-truth list
         # price; AUD is an indicative conversion at this configurable FX rate.
         "currencies": [
-            {"code": "USD", "symbol": "$", "rate": 1.0, "label": "USD (list price)"},
+            {"code": "USD", "symbol": "$", "rate": 1.0, "label": "USD"},
             {"code": "AUD", "symbol": "A$", "rate": FINOPS_FX_AUD, "label": f"AUD (× {FINOPS_FX_AUD} FX)"},
         ],
         "fx_aud": FINOPS_FX_AUD,
@@ -1632,7 +1644,7 @@ def get_pipelines(
         capped = {"shown": limit, "total": total}
     wrapped = _wrap(rows, live_source=live_source)
     wrapped["summary"] = summary
-    wrapped["caveats"] = pipelines.CAVEATS
+    wrapped["caveats"] = pipelines.caveats()
     if cached_at:
         wrapped["cached_at"] = cached_at
     if capped:
@@ -2212,14 +2224,14 @@ def get_genie_cost(workspace: str = Query("all")) -> dict[str, Any]:
         # heavy billing scan runs once nightly, not on every page load.
         if workspace in ("all", ""):
             env = _cached_or_live("genie-cost", lambda: live.genie_cost_live(WAREHOUSE_ID, None))
-            return _attach_platform_total_env(env)
+            return _fresh_caveats(_attach_platform_total_env(env), genie_cost.caveats())
         try:
             payload = dict(_short_cache(f"genie-cost:{workspace}", lambda: live.genie_cost_live(WAREHOUSE_ID, workspace)))
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
-        return _wrap(_attach_platform_total_payload(payload), live_source=True)
+        return _fresh_caveats(_wrap(_attach_platform_total_payload(payload), live_source=True), genie_cost.caveats())
     payload = _attach_platform_total_payload(genie_cost.get_genie_cost(workspace))
-    return _wrap(payload)
+    return _fresh_caveats(_wrap(payload), genie_cost.caveats())
 
 
 @app.get("/api/ai-cost")
@@ -2241,14 +2253,14 @@ def get_ai_cost(workspace: str = Query("all")) -> dict[str, Any]:
         # workspace scopes live. Mirrors /api/genie-cost + /api/cost-drivers.
         if workspace in ("all", ""):
             env = _cached_or_live("ai-cost", lambda: live.ai_cost_live(WAREHOUSE_ID, None))
-            return _attach_platform_total_env(env)
+            return _fresh_caveats(_attach_platform_total_env(env), ai_cost.caveats())
         try:
             payload = dict(_short_cache(f"ai-cost:{workspace}", lambda: live.ai_cost_live(WAREHOUSE_ID, workspace)))
         except live.LiveError as e:
             raise HTTPException(status_code=503, detail=f"live read failed — {e.source}: {e.detail}")
-        return _wrap(_attach_platform_total_payload(payload), live_source=True)
+        return _fresh_caveats(_wrap(_attach_platform_total_payload(payload), live_source=True), ai_cost.caveats())
     payload = _attach_platform_total_payload(ai_cost.get_ai_cost(workspace))
-    return _wrap(payload)
+    return _fresh_caveats(_wrap(payload), ai_cost.caveats())
 
 
 @app.get("/api/classification")
@@ -2447,7 +2459,7 @@ async def genie_ask(req: GenieAskRequest) -> Any:
         meta = {k: v for k, v in result.items() if k != "text"}
         meta["asked_question"] = req.question
         meta["source"] = "synthetic"
-        meta["caveat"] = genie_answers.CAVEAT
+        meta["caveat"] = genie_answers._caveat()
         yield f"data: {json.dumps({'type': 'meta', 'payload': meta})}\n\n"
         for word in answer_text.split(" "):
             yield f"data: {json.dumps({'type': 'token', 'token': word + ' '})}\n\n"
@@ -2525,7 +2537,9 @@ def get_dqm(
     wrapped["by_workspace"] = payload["by_workspace"]
     wrapped["prune_candidates"] = payload["prune_candidates"]
     wrapped["billing_line"] = payload["billing_line"]
-    wrapped["caveat"] = payload["caveat"]
+    # Price-basis wording follows the current discount setting, not the snapshot.
+    from data.config import price_basis_note
+    wrapped["caveat"] = "Refresh DBUs run on serverless. " + price_basis_note()
     if dqm_cached_at:
         wrapped["cached_at"] = dqm_cached_at
     return wrapped

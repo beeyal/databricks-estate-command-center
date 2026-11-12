@@ -1,4 +1,6 @@
 import type { Priority, RecCategory } from "../../types";
+import { useCurrency } from "../../store/appStore";
+import { fmtMoneyText } from "../shared/format";
 
 // Priority pill — P1 (danger) / P2 (warning) / P3 (neutral).
 const PRIORITY_STYLE: Record<Priority, string> = {
@@ -48,12 +50,13 @@ export function EffortChip({ effort }: { effort: "Low" | "Med" | "High" }) {
 
 // Evidence chips — the metrics that fired the recommendation (e.g. "412 queries").
 export function EvidenceChips({ evidence }: { evidence: string[] }) {
+  const cur = useCurrency();
   if (!evidence?.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {evidence.map((e, i) => (
         <span key={i} className="pill bg-surface border border-border text-neutral tabular-nums">
-          {e}
+          {fmtMoneyText(e, cur)}
         </span>
       ))}
     </div>

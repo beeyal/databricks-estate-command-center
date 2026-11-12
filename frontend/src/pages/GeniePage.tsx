@@ -10,7 +10,7 @@ import { KpiRow } from "../components/kpi/KpiRow";
 import { InfoTip } from "../components/shared/InfoTip";
 import { surfaceStyle, surfaceHelp } from "../components/genie/GenieSpendCard";
 import { fmtMoney, fmtNum, fmtPct, byNamedFirst } from "../components/shared/format";
-import { useCurrency } from "../store/appStore";
+import { priceBasis, priceBasisLong, costLabel, useCurrency } from "../store/appStore";
 import type { GenieCostRow } from "../types";
 
 // Genie $ tab — Genie cost tracking by surface (Code / Spaces / Agents), per
@@ -140,7 +140,7 @@ export function GeniePage() {
           {
             key: "list",
             header: (
-              <span className="inline-flex items-center gap-1">List $<InfoTip text="Genie cost at published list price for this user across all surfaces (DBUs times effective list rate), before any free allowance." /></span>
+              <span className="inline-flex items-center gap-1">{costLabel(cur)}<InfoTip text={`Genie cost for this user across all surfaces (DBUs times list rate, ${priceBasis(cur)}), before any free allowance.`} /></span>
             ),
             align: "right" as const,
             sortValue: (u: (typeof roll.usersRanked)[number]) => u.list,
@@ -184,7 +184,7 @@ export function GeniePage() {
           },
         ]
       : [
-          { key: "list", header: "List $", align: "right" as const, sortValue: (r: GenieCostRow) => r.total_list_cost_usd, render: (r: GenieCostRow) => <span className="tabular-nums">{fmtMoney(r.total_list_cost_usd, cur)}</span> },
+          { key: "list", header: costLabel(cur), align: "right" as const, sortValue: (r: GenieCostRow) => r.total_list_cost_usd, render: (r: GenieCostRow) => <span className="tabular-nums">{fmtMoney(r.total_list_cost_usd, cur)}</span> },
           { key: "paid", header: "Paid $", align: "right" as const, sortValue: (r: GenieCostRow) => r.paid_list_cost_usd, render: (r: GenieCostRow) => <span className="tabular-nums text-neutral">{fmtMoney(r.paid_list_cost_usd, cur)}</span> },
         ]),
   ];
@@ -192,7 +192,7 @@ export function GeniePage() {
   return (
     <PageShell
       title="Genie spend"
-      subtitle="Genie cost by surface (Code / Spaces / Agents), per workspace and per user — from system.billing.usage. Figures are list price."
+      subtitle={`Genie cost by surface (Code / Spaces / Agents), per workspace and per user — from system.billing.usage. Figures are ${priceBasisLong(cur)}.`}
     >
       {loading && !gc && <LoadingCard />}
       {error && <ErrorCard message={error} />}
@@ -205,8 +205,8 @@ export function GeniePage() {
 
           <KpiRow cols={6}>
             <KpiCard label="Genie $ / mo" value={fmtMoney(roll.list, cur, { compact: true })} tone="accent"
-              hint={gc.total_platform_spend_usd_month ? `${fmtPct(roll.list / gc.total_platform_spend_usd_month, 1)} of total spend` : "list price"}
-              info="Total Genie cost this month at published list price. The hint shows it as a share of TOTAL platform spend this month (that denominator includes all products — Genie and AI included), so it's directional context (Genie is typically a small slice), not a Genie-excluded ratio." />
+              hint={gc.total_platform_spend_usd_month ? `${fmtPct(roll.list / gc.total_platform_spend_usd_month, 1)} of total spend` : priceBasis(cur)}
+              info={`Total Genie cost this month (${priceBasis(cur)}). The hint shows it as a share of TOTAL platform spend this month (that denominator includes all products — Genie and AI included), so it's directional context (Genie is typically a small slice), not a Genie-excluded ratio.`} />
             <KpiCard label={billable ? "Billable $ / mo" : "Paid $ / mo"} value={fmtMoney(roll.paid, cur, { compact: true })} tone="danger" info={billable ? "Billable Genie cost this month — spend above each user's 150 free DBUs/month. This figure is already net of the free allowance." : "Estimated billable Genie cost after each user's 150 free DBUs per month are deducted. The free tier is shared across all Genie surfaces."} />
             {billable && liveFreeAbsorbed != null ? (
               /* Live + GENIE_FREE_USAGE present (20 Jul 2026+): a REAL free-absorbed
@@ -330,7 +330,7 @@ export function GeniePage() {
           <div className="flex flex-col gap-2">
             <h3 className="text-sm font-semibold flex items-center gap-1.5">
               Top Genie users
-              <InfoTip text="Users ranked by Genie list cost, with their dominant surface and how many workspaces they use Genie in. Useful for spotting who to coach toward a curated Genie Space." />
+              <InfoTip text="Users ranked by Genie cost, with their dominant surface and how many workspaces they use Genie in. Useful for spotting who to coach toward a curated Genie Space." />
               {roll.usersRanked.length > USER_CAP && (
                 <span className="text-xs font-normal text-neutral">top {USER_CAP} of {roll.usersRanked.length}</span>
               )}
@@ -342,7 +342,7 @@ export function GeniePage() {
           <div className="flex flex-col gap-2">
             <h3 className="text-sm font-semibold flex items-center gap-1.5">
               Per user · workspace · surface
-              <InfoTip text="The ground-truth Genie usage rows: one line per user, workspace and surface, with DBUs, list $, and estimated paid $ after the free allowance." />
+              <InfoTip text="The ground-truth Genie usage rows: one line per user, workspace and surface, with DBUs, cost $, and estimated paid $ after the free allowance." />
               {rows.length > DETAIL_CAP && (
                 <span className="text-xs font-normal text-neutral">top {DETAIL_CAP} of {rows.length} by $</span>
               )}

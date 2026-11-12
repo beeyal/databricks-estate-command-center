@@ -125,6 +125,15 @@ export interface CurrencyOption {
   label: string;
 }
 
+// The active currency as the UI uses it (see useCurrency). `rate` here is the
+// FULL multiplier applied to every list-price USD figure from the backend: the
+// FX rate × (1 − effective discount). `fx` is the FX part alone and `discount`
+// the configured blended discount (0 ⇒ figures are list price).
+export interface ActiveCurrency extends CurrencyOption {
+  fx: number;
+  discount: number;
+}
+
 export interface AppConfig {
   app_name: string;
   app_short: string;

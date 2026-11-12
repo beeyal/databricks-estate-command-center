@@ -57,7 +57,7 @@ function CurrencyToggle({ currencies }: { currencies: CurrencyOption[] }) {
   const active = currencies.find((c) => c.code === currency) ?? currencies[0];
   return (
     <div className="inline-flex items-center gap-1.5">
-      <div className="inline-flex rounded-lg border border-border overflow-hidden" title="List-price USD × FX rate — indicative AUD conversion">
+      <div className="inline-flex rounded-lg border border-border overflow-hidden" title="USD × FX rate — indicative AUD conversion">
         {currencies.map((c) => (
           <button
             key={c.code}

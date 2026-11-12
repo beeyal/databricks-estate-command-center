@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { fetchWorkspaces, fetchCostDrivers } from "../api/client";
 import { useApi } from "../hooks/useApi";
-import { useCurrency, useBuEnabled } from "../store/appStore";
+import { priceBasis, useCurrency, useBuEnabled } from "../store/appStore";
 import { PageShell, LoadingCard, ErrorCard } from "../components/layout/PageShell";
 import { DataTable } from "../components/shared/DataTable";
 import type { Column } from "../components/shared/DataTable";
@@ -139,7 +139,7 @@ export function WorkspacesPage() {
         <>
           <KpiRow cols={5}>
             <KpiCard label="Workspaces" value={String(rows.length)} tone="neutral" info="Number of Databricks workspaces matching the current filters. Fewer, well-governed workspaces are easier to control for cost." />
-            <KpiCard label="Spend / mo" value={fmtMoney(totalSpend, cur, { compact: true })} tone="accent" hint={cur.code === "USD" ? "list price" : `× ${cur.rate} FX`} info="Total monthly spend across the filtered workspaces, computed as Databricks Units consumed times the effective list price. This is the main cost number to watch." />
+            <KpiCard label="Spend / mo" value={fmtMoney(totalSpend, cur, { compact: true })} tone="accent" hint={cur.code === "USD" ? priceBasis(cur) : `× ${cur.fx} FX`} info={`Total monthly spend across the filtered workspaces, computed as Databricks Units consumed times the list price (${priceBasis(cur)}). This is the main cost number to watch.`} />
             <KpiCard label="Savings / mo" value={fmtMoney(totalSavings, cur, { compact: true })} tone="success" delta={{ text: fmtPct(savingsPct), tone: "positive" }} hint="est. headroom" info="ESTIMATED optimisation headroom (not realised savings) across the filtered workspaces — the sum of each workspace's spend × its modeled Savings % (a heuristic on un-automated + non-serverless share, capped so it never claims an implausibly large fraction). A directional opportunity to validate on Recommendations, not money already saved." />
             <KpiCard label="Avg automation" value={fmtPct(avgAutomated)} tone="info" info="Average automation % across the filtered workspaces — the share of DBUs on scheduled Jobs + DLT/Lakeflow compute (vs interactive/all-purpose/SQL). Higher = more of the workload is productionised; low is normal for exploratory/data-science workspaces." />
             <KpiCard label="Low automation" value={String(lowAutomation)} tone="warning" hint="<25% automated" info="Workspaces where under 25% of DBUs run on automated (scheduled Jobs + DLT) compute — the rest is interactive/all-purpose/SQL. Often the biggest headroom to productionise, but low automation is normal for exploratory/data-science workspaces and isn't a fault by itself." />
@@ -274,7 +274,7 @@ function SkuSubView() {
       {data && (
         <>
           <KpiRow cols={3}>
-            <KpiCard label="Scope spend / mo" value={fmtMoney(data.data.total_spend_usd_month, cur, { compact: true })} tone="accent" info="Total monthly spend for the selected scope, whole estate or one workspace, as Databricks Units times effective list price. The base for the breakdowns below." />
+            <KpiCard label="Scope spend / mo" value={fmtMoney(data.data.total_spend_usd_month, cur, { compact: true })} tone="accent" info={`Total monthly spend for the selected scope, whole estate or one workspace, as Databricks Units times list price (${priceBasis(cur)}). The base for the breakdowns below.`} />
             <KpiCard label="Cost drivers" value={String(data.data.drivers.length)} tone="info" hint="billing_origin_product" info="Number of distinct products driving spend, such as DBSQL, Jobs, or Model Serving. Fewer concentrated drivers make cost easier to target." />
             <KpiCard label="SKUs" value={String(data.data.sku_breakdown.length)} tone="neutral" hint="sku_name" info="Number of distinct billing SKUs in this scope. Each SKU is a separately priced product line, useful for pinpointing where cost sits." />
           </KpiRow>

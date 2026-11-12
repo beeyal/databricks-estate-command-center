@@ -10,7 +10,7 @@ import { ackEmptyMessage } from "../components/shared/AckStatusFilter";
 import { FilterBar, Dropdown, MultiDropdown, SearchBox } from "../components/shared/FilterBar";
 import { KpiCard } from "../components/kpi/KpiCard";
 import { KpiRow } from "../components/kpi/KpiRow";
-import { fmtMoney, fmtPct, byNamedFirst } from "../components/shared/format";
+import { fmtMoney, fmtMoneyText, fmtPct, byNamedFirst } from "../components/shared/format";
 import { InfoTip } from "../components/shared/InfoTip";
 import { useCurrency, useFeatures, useAppStore, useBuEnabled, useTeamEnabled } from "../store/appStore";
 import { PriorityPill, CategoryPill, EffortChip, EvidenceChips } from "../components/recommendations/RecPills";
@@ -168,7 +168,7 @@ export function RecommendationsPage() {
       render: (r) => (
         <div className="flex flex-col gap-1 max-w-[520px]">
           <div className="font-medium leading-snug flex items-center gap-1.5">
-            {r.title}
+            {fmtMoneyText(r.title, cur)}
           </div>
           <div className="text-xs text-neutral">
             <span className="font-mono">{r.scope_label}</span>

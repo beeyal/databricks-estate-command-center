@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchJobs } from "../api/client";
 import { useApi } from "../hooks/useApi";
-import { useCurrency, useFeatures, useBuEnabled, useAppStore } from "../store/appStore";
+import { priceBasis, useCurrency, useFeatures, useBuEnabled, useAppStore } from "../store/appStore";
 import { PageShell, LoadingCard, ErrorCard } from "../components/layout/PageShell";
 import { DataTable } from "../components/shared/DataTable";
 import type { Column } from "../components/shared/DataTable";
@@ -273,7 +273,7 @@ export function JobsPage() {
             {/* Failed-run $ moved off the top KPIs (it's an estimate) — it lives as
                 the per-job "Failed $" column + drill-down instead. */}
             <KpiCard label="Fastest-growing (MoM)" value={String(summary?.num_growing ?? 0)} tone="warning" hint="cost rising MoM" info="Jobs whose duration/cost is growing month-over-month (≥15% over the trend window). A fixed month-over-month signal — does NOT change with the time-period selector." />
-            <KpiCard label={`Total job cost (${timeRange})`} value={fmtMoney(summary?.total_cost_usd_month ?? 0, cur, { compact: true })} tone="info" info="Total list-price cost of the filtered jobs over the selected window (scales with the time-period selector). Live mode attributes cost only to jobs-compute + serverless jobs (all-purpose jobs carry no job-level billing)." />
+            <KpiCard label={`Total job cost (${timeRange})`} value={fmtMoney(summary?.total_cost_usd_month ?? 0, cur, { compact: true })} tone="info" info={`Total cost of the filtered jobs over the selected window (${priceBasis(cur)}; scales with the time-period selector). Live mode attributes cost only to jobs-compute + serverless jobs (all-purpose jobs carry no job-level billing).`} />
           </KpiRow>
 
           {message && (

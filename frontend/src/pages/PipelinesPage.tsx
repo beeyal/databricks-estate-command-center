@@ -15,11 +15,13 @@ import { fmtMoney, fmtPct, fmtNum, byNamedFirst } from "../components/shared/for
 import { ackEmptyMessage } from "../components/shared/AckStatusFilter";
 import type { PipelineRow, PipelineReason } from "../types";
 
+// Keyed by the lower-cased pipeline_type from system.lakeflow.pipelines.
 const PIPELINE_TYPE_COLOR: Record<string, string> = {
-  lakeflow: "bg-accent/15 text-accent",
-  dlt: "bg-success/15 text-success",
-  mv: "bg-info/15 text-info",
-  st: "bg-info/15 text-info",
+  etl_pipeline: "bg-accent/15 text-accent",
+  ingestion_pipeline: "bg-success/15 text-success",
+  materialized_view: "bg-info/15 text-info",
+  streaming_table: "bg-info/15 text-info",
+  sql_mv_st: "bg-info/15 text-info",
 };
 
 const REASON_STYLE: Record<PipelineReason, string> = {
@@ -217,7 +219,7 @@ export function PipelinesPage() {
           <KpiRow cols={6}>
             <KpiCard label="Pipelines" value={String(summary?.num_pipelines ?? 0)} tone="neutral" info="Number of pipelines (Lakeflow, DLT, MV/ST with pipeline IDs) matching the current filters." />
             <KpiCard label="Pipeline cost / mo" value={fmtMoney(summary?.total_cost_usd_month ?? 0, cur, { compact: true })} tone="accent" delta={summary?.mom_pct != null && Math.abs(summary.mom_pct) >= 0.005 ? { text: `${summary.mom_pct > 0 ? "+" : "−"}${fmtPct(Math.abs(summary.mom_pct))} vs prior 30d`, tone: summary.mom_pct > 0 ? "negative" : "positive" } : undefined} info="Cost of the filtered pipelines over the trailing 30 days; the change compares with the 30 days before." />
-            <KpiCard label="MV/ST cost / mo" value={fmtMoney(summary?.mv_st_cost_usd_month ?? 0, cur, { compact: true })} tone="info" hint={`${summary?.num_mv_st ?? 0} tables`} info="Cost attributable to SQL materialized views and streaming tables in the filtered scope." />
+            <KpiCard label="MV/ST cost / mo" value={fmtMoney(summary?.mv_st_cost_usd_month ?? 0, cur, { compact: true })} tone="info" hint={`${summary?.num_mv_st ?? 0} tables`} info="Cost attributable to SQL materialized views and streaming tables in the filtered scope, including SQL-billed refreshes that have no row in system.lakeflow.pipelines." />
             <KpiCard label="Serverless %" value={fmtPct(summary?.serverless_pct ?? 0)} tone="success" info="Share of pipeline compute running on Databricks Serverless (vs Classic/Provisioned)." />
             <KpiCard label="Failing" value={String(summary?.num_failing ?? 0)} tone="danger" hint="≥20% of updates" info="Pipelines where at least 20% of updates in the last 30 days failed (with at least 3 updates)." />
             <KpiCard label="Continuous" value={String(summary?.num_continuous ?? 0)} tone="accent" info="Pipelines set to continuous mode — they run (and bill) all the time rather than on a trigger or schedule. Worth checking in non-production." />

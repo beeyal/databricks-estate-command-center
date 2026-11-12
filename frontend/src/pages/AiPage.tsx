@@ -10,7 +10,7 @@ import { KpiRow } from "../components/kpi/KpiRow";
 import { Pill } from "../components/shared/Pill";
 import { InfoTip } from "../components/shared/InfoTip";
 import { fmtMoney, fmtNum, fmtPct, byNamedFirst } from "../components/shared/format";
-import { useCurrency } from "../store/appStore";
+import { priceBasis, priceBasisLong, useCurrency } from "../store/appStore";
 import type { AiEndpoint, AiCaller } from "../types";
 
 // AI $ tab — all AI/GenAI billing products (Model Serving, Foundation Model API,
@@ -78,7 +78,7 @@ export function AiPage() {
       </span>
     ) },
     { key: "dbus", header: "DBUs", align: "right", sortValue: (e) => e.dbus_month, render: (e) => <span className="tabular-nums text-neutral">{fmtNum(e.dbus_month)}</span> },
-    { key: "usd", header: (<span className="inline-flex items-center gap-1">$ / mo<InfoTip text="Endpoint cost this month at list price (DBUs times effective list rate)." /></span>), align: "right", sortValue: (e) => e.list_usd_month, render: (e) => <span className="tabular-nums">{fmtMoney(e.list_usd_month, cur)}</span> },
+    { key: "usd", header: (<span className="inline-flex items-center gap-1">$ / mo<InfoTip text={`Endpoint cost this month (DBUs times list rate, ${priceBasis(cur)}).`} /></span>), align: "right", sortValue: (e) => e.list_usd_month, render: (e) => <span className="tabular-nums">{fmtMoney(e.list_usd_month, cur)}</span> },
   ];
 
   const userColumns: Column<NonNullable<typeof ai>["by_user"][number]>[] = [
@@ -109,7 +109,7 @@ export function AiPage() {
   return (
     <PageShell
       title="AI spend"
-      subtitle="All AI billing products — Model Serving, Foundation Model API, Vector Search, Agent Bricks, AI Functions, fine-tuning — by product, endpoint, owner and workspace. Figures are list price. (Genie has its own tab.)"
+      subtitle={`All AI billing products — Model Serving, Foundation Model API, Vector Search, Agent Bricks, AI Functions, fine-tuning — by product, endpoint, owner and workspace. Figures are ${priceBasisLong(cur)}. (Genie has its own tab.)`}
     >
       {loading && !ai && <LoadingCard />}
       {error && <ErrorCard message={error} />}
@@ -126,7 +126,7 @@ export function AiPage() {
 
           <KpiRow cols={ai.flags.length > 0 ? 6 : 5}>
             <KpiCard label="AI $ / mo" value={fmtMoney(ai.summary.total_list_usd_month, cur, { compact: true })} tone="accent"
-              hint={ai.total_platform_spend_usd_month ? `${fmtPct(ai.summary.total_list_usd_month / ai.total_platform_spend_usd_month, 1)} of total spend` : "list price"}
+              hint={ai.total_platform_spend_usd_month ? `${fmtPct(ai.summary.total_list_usd_month / ai.total_platform_spend_usd_month, 1)} of total spend` : priceBasis(cur)}
               info="Total AI spend this month across all AI billing products (the numerator excludes Genie, which has its own page). The hint shows it as a share of TOTAL platform spend this month (that denominator includes every product — all AI and Genie included), so it's directional context, not an exact ratio." />
             <KpiCard label="GPU $ / mo" value={fmtMoney(ai.summary.gpu_usd_month, cur, { compact: true })} tone="danger" info="Spend on GPU-backed endpoints (model serving / training). GPUs are the most expensive AI compute — the first place to look for savings." />
             {/* Flagged-savings only shown when there are real flags — the flag

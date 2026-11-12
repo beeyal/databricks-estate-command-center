@@ -1,6 +1,6 @@
 import { fetchWorkspaceDetail } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
-import { useCurrency, useBuEnabled, useAppStore } from "../../store/appStore";
+import { priceBasis, useCurrency, useBuEnabled, useAppStore } from "../../store/appStore";
 import { LoadingCard, ErrorCard } from "../layout/PageShell";
 import { StatusPill, Pill } from "../shared/Pill";
 import { InfoTip } from "../shared/InfoTip";
@@ -147,7 +147,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
 
       {/* Stat tiles */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <StatTile label="Spend / mo" value={fmtMoney(d.spend_usd_month, cur, { compact: true })} tone="accent" info="This workspace's estimated monthly spend at list price (DBUs consumed times effective list rate)." />
+        <StatTile label="Spend / mo" value={fmtMoney(d.spend_usd_month, cur, { compact: true })} tone="accent" info={`This workspace's estimated monthly spend (DBUs consumed times list rate, ${priceBasis(cur)}).`} />
         <StatTile label="Savings / mo" value={fmtMoney(d.savings_usd_month, cur, { compact: true })} tone="success" info="Estimated monthly dollars recoverable in this workspace from the recommended optimisations." />
         <StatTile label="DBUs / mo" value={fmtNum(d.dbus_month, { compact: true })} tone="info" info="Databricks Units consumed per month, the unit of processing you are billed for." />
         <StatTile label="Automated" value={fmtPct(d.automated_pct)} info="Share of spend on automated or optimised compute (serverless, jobs, Predictive Optimization) versus manually managed compute." />
@@ -160,7 +160,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
             label="Genie / mo"
             value={fmtMoney(d.genie.total_list_cost_usd, cur, { compact: true })}
             tone="info"
-            info={`Genie spend this month at list price across ${d.genie.num_surfaces} surface(s), ${d.genie.distinct_users} user(s). Paid portion (above the free allowance): ${fmtMoney(d.genie.paid_list_cost_usd, cur, { compact: true })}.`}
+            info={`Genie spend this month (${priceBasis(cur)}) across ${d.genie.num_surfaces} surface(s), ${d.genie.distinct_users} user(s). Paid portion (above the free allowance): ${fmtMoney(d.genie.paid_list_cost_usd, cur, { compact: true })}.`}
           />
         )}
       </div>

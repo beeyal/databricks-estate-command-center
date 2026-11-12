@@ -42,12 +42,12 @@ _DEFAULTS: dict[str, Any] = {
     # live once a warehouse + gold schema are configured; otherwise it falls back to
     # demo with a "finish setup" banner (see app.py). Explicit USE_LIVE=false stays demo.
     "use_live": True,
-    # Effective-cost calibration. The app's figures are
-    # LIST price (system.billing.usage × list_prices). A customer's real invoice is
-    # list minus committed-use discount / reservations / private pricing. There's no
-    # system-table source for that, so it's a single configurable factor: effective
-    # ≈ list × (1 − effective_discount). 0.0 ⇒ show list only (no fabricated
-    # effective number). e.g. 0.30 = a 30% blended discount. Azure VM/infra cost is
+    # Effective-cost calibration. The backend computes LIST price
+    # (system.billing.usage × list_prices). A customer's real invoice is list minus
+    # their committed-use discount / private pricing. There's no system-table
+    # source for that, so it's a single configurable factor: effective = list ×
+    # (1 − effective_discount). The UI applies it to every $ it shows (see
+    # useCurrency); 0.0 ⇒ figures stay list price. e.g. 0.30 = a 30% discount. Azure VM/infra cost is
     # NOT in Databricks system tables at all — that stays an Azure Cost Management
     # reconciliation, surfaced as an explicit caveat, never invented here.
     "effective_discount": 0.0,
@@ -129,6 +129,21 @@ def _resolve_scalar(env_names: list[str], key: str) -> Any:
         if val not in (None, ""):
             return val
     return _DEFAULTS[key]
+
+
+def price_basis_note() -> str:
+    """One sentence on what the app's $ figures are, for caveat text shown in the UI.
+
+    The backend computes LIST price (usage × system.billing.list_prices) and the UI
+    applies the configured effective discount to every figure it shows, so this
+    reads the same setting to say which one the user is looking at."""
+    d = float(get_settings().get("effective_discount") or 0.0)
+    src = "usage_quantity × pricing.effective_list.default"
+    if d > 0:
+        pct = f"{round(d * 100, 1):g}%"
+        return (f"Figures are effective cost: list price ({src}) less your configured "
+                f"{pct} discount (FINOPS_EFFECTIVE_DISCOUNT). The Account Console is the source of truth.")
+    return f"Figures are list price ({src}); the Account Console is the source of truth."
 
 
 @lru_cache(maxsize=1)

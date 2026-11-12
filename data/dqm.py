@@ -22,6 +22,11 @@ from typing import Any
 # Account Console is source of truth). Monitor refreshes run on serverless.
 DQM_DBU_LIST_PRICE_USD = 0.55
 
+
+def _price_note() -> str:
+    from data.config import price_basis_note
+    return price_basis_note()
+
 # Representative monitors (SPEC §12 asks for ~8–12). Each: the monitored table,
 # monitor type, refresh schedule, freshness, drift/quality status, #metrics, and
 # the monthly refresh DBUs that drive the DATA_QUALITY_MONITORING billing line.
@@ -256,7 +261,7 @@ def get_dqm(
         ],
         "billing_line": "DATA_QUALITY_MONITORING",
         "dbu_list_price_usd": DQM_DBU_LIST_PRICE_USD,
-        "caveat": "Refresh DBUs run on serverless; list-price reference, Account Console is source of truth.",
+        "caveat": "Refresh DBUs run on serverless. " + _price_note(),
     }
 
 

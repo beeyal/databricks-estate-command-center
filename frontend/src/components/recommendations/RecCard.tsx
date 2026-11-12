@@ -1,7 +1,7 @@
 import type { HubRec } from "../../types";
-import { useCurrency } from "../../store/appStore";
+import { priceBasis, useCurrency } from "../../store/appStore";
 import { InfoTip } from "../shared/InfoTip";
-import { fmtMoney } from "../shared/format";
+import { fmtMoney, fmtMoneyText } from "../shared/format";
 
 const SCOPE_LABEL: Record<string, string> = {
   global: "Estate-wide",
@@ -29,7 +29,7 @@ export function RecCard({ rec }: { rec: HubRec }) {
             <ol className="list-decimal list-inside flex flex-col gap-1 text-brand-dark/90">
               {rec.what_to_do.map((step, i) => (
                 <li key={i} className="leading-snug">
-                  {step}
+                  {fmtMoneyText(step, cur)}
                 </li>
               ))}
             </ol>
@@ -44,18 +44,18 @@ export function RecCard({ rec }: { rec: HubRec }) {
                 {rec.savings_estimatable === false ? "Why no savings figure" : "How this is calculated"}
                 <InfoTip text={rec.savings_estimatable === false
                   ? "This is a genuine optimisation, but its dollar saving can't be computed accurately from your usage data alone — it needs an A/B run or Azure Billing (VM + reservation) cost. We show the finding, not a number we can't stand behind."
-                  : "The formula and the actual figures from your usage data behind this estimate. All $ are list price."} />
+                  : `The formula and the actual figures from your usage data behind this estimate. All $ are ${priceBasis(cur)}.`} />
               </div>
               {rec.savings_estimatable !== false && rec.est_savings_usd_month > 0 && (
                 <div className="text-sm font-semibold text-success mb-1 tabular-nums">
                   {fmtMoney(rec.est_savings_usd_month, cur)} / mo
                 </div>
               )}
-              <p className="text-xs text-neutral leading-snug">{rec.savings_basis}</p>
+              <p className="text-xs text-neutral leading-snug">{fmtMoneyText(rec.savings_basis, cur)}</p>
               {rec.evidence.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {rec.evidence.map((e, i) => (
-                    <span key={i} className="pill bg-border/60 text-neutral text-[11px]">{e}</span>
+                    <span key={i} className="pill bg-border/60 text-neutral text-[11px]">{fmtMoneyText(e, cur)}</span>
                   ))}
                 </div>
               )}
@@ -65,13 +65,13 @@ export function RecCard({ rec }: { rec: HubRec }) {
           {rec.expected_impact && (
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-neutral mb-1">Expected impact</div>
-              <p className="text-xs text-neutral leading-relaxed">{rec.expected_impact}</p>
+              <p className="text-xs text-neutral leading-relaxed">{fmtMoneyText(rec.expected_impact, cur)}</p>
             </div>
           )}
 
           {rec.notes && (
             <div className="card bg-surface/60 py-2 text-xs text-neutral">
-              <span className="font-medium text-warning">Note:</span> {rec.notes}
+              <span className="font-medium text-warning">Note:</span> {fmtMoneyText(rec.notes, cur)}
             </div>
           )}
         </div>

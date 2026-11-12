@@ -102,7 +102,7 @@ A persistent [**Ask Genie**](#ask-genie) banner sits beneath the nav when `featu
 
 The estate dashboard. A KPI row — **Total spend/mo**, **Savings potential** (`$` + `% of spend`), **Total DBUs/mo**, **Top cost driver** (largest `billing_origin_product` by spend), **#Need attention** (critical health) — over a weekly **spend-and-captured-savings** trend chart, then the [cost-by-driver cost views](#dual-currency--cost-by-driver-cost-views): **cost by cost-driver (product)**, **monthly trend — top-5 drivers**, and a **driver-change-vs-prior-30-days (%)** bar for **MoM spike detection** (drivers up ≥ 25% MoM fire a cost-spike recommendation). A **Top savings opportunities** rollup ranks the highest-impact recs cross-page (worst queries, worst external tables, most over-privileged principals) and deep-links into the Recommendations hub. This is the *only* page besides Recommendations that carries advice, and only as a teaser. A **USD/AUD** toggle in the header restates every `$` figure.
 
-**Cost by operational lens** re-expresses the same trailing-30-day spend the way a platform team runs it: **by workload** (batch / streaming / interactive / ML-AI — jobs split by job-name rules, pipelines by continuous vs triggered mode), **Classic vs Serverless**, **Production vs Non-production**, **by environment tier** (Dev / Test / Pre-prod / Prod, from the workspace name) and **by naming-convention group** (only when `FINOPS_WORKSPACE_GROUPS` is set). In live mode every lens comes from one billing read, so they all reconcile to the same total. Set `FINOPS_EFFECTIVE_DISCOUNT` to also show effective (post-discount) cost next to list.
+**Cost by operational lens** re-expresses the same trailing-30-day spend the way a platform team runs it: **by workload** (batch / streaming / interactive / ML-AI — jobs split by job-name rules, pipelines by continuous vs triggered mode), **Classic vs Serverless**, **Production vs Non-production**, **by environment tier** (Dev / Test / Pre-prod / Prod, from the workspace name) and **by naming-convention group** (only when `FINOPS_WORKSPACE_GROUPS` is set). In live mode every lens comes from one billing read, so they all reconcile to the same total. Set `FINOPS_EFFECTIVE_DISCOUNT` and every $ figure in the app switches to effective (post-discount) cost.
 
 ### Access
 
@@ -265,7 +265,7 @@ The surface enum is **open** — the app labels whatever values appear rather th
 - The surface split is **real in the billing data but not yet in the published schema doc** — treat as may-change; the app degrades to per-user/workspace totals if the field is null.
 - The 150 free DBUs are **shared across all surfaces**, so per-surface *paid* `$` is a pro-rated estimate; only the per-user total paid figure is exact.
 - **Budgets can target Genie** (Unity AI Gateway + tag `databricks-product: genie`) but **cannot be split by surface**, and cannot remove the free tier.
-- `$` is **list-price reference** (`usage_quantity × pricing.effective_list.default`); the **Account Console is the source of truth**. Filter on `billing_origin_product = 'GENIE'`, never by SKU.
+- `$` is **list price** (`usage_quantity × pricing.effective_list.default`), or effective cost when `FINOPS_EFFECTIVE_DISCOUNT` is set; the **Account Console is the source of truth**. Filter on `billing_origin_product = 'GENIE'`, never by SKU.
 - Consumption-based pricing began **6 Jul 2026**, so figures **read light until usage flows**.
 
 ![Genie spend in the Workspaces drill-down](docs/screenshots/16-workspaces-drilldown-genie.png)
@@ -334,7 +334,7 @@ Under the grid the app states where the environment came from by share of cost (
 
 ## How the numbers are calculated
 
-Every `$` figure in the app is a **deterministic, rule-based estimate** — no model is involved in any calculation. (The optional LLM only rewrites the *wording* of a recommendation's rationale, never its number; see [Feature flags](#feature-flags--deploy-variants).) Each estimate follows one shape: **observed cost × a published reduction fraction × how severe the measured inefficiency is**, so it is fully explainable and auditable. Those reduction fractions are expert-set constants named at the top of [`data/recommender.py`](data/recommender.py) and [`data/generate_demo.py`](data/generate_demo.py) — change them there and every downstream figure moves with them. The inputs are the customer's real `system.*` metrics in live mode or the seeded Acme metrics in demo mode; the formulas are identical either way. All `$` are **list-price reference** (`usage_quantity × pricing.effective_list.default`), labelled *estimated* in the UI — the Account Console is the source of truth.
+Every `$` figure in the app is a **deterministic, rule-based estimate** — no model is involved in any calculation. (The optional LLM only rewrites the *wording* of a recommendation's rationale, never its number; see [Feature flags](#feature-flags--deploy-variants).) Each estimate follows one shape: **observed cost × a published reduction fraction × how severe the measured inefficiency is**, so it is fully explainable and auditable. Those reduction fractions are expert-set constants named at the top of [`data/recommender.py`](data/recommender.py) and [`data/generate_demo.py`](data/generate_demo.py) — change them there and every downstream figure moves with them. The inputs are the customer's real `system.*` metrics in live mode or the seeded Acme metrics in demo mode; the formulas are identical either way. All `$` are **list price** (`usage_quantity × pricing.effective_list.default`), or effective cost when `FINOPS_EFFECTIVE_DISCOUNT` is set, labelled *estimated* in the UI — the Account Console is the source of truth.
 
 ### Query Advisor — flags, savings & impact
 
@@ -436,7 +436,7 @@ The screenshot below is the **"neither" variant** — 13 tabs (no Data Quality),
 
 Folded in from the **cost-by-driver reference dashboard** — they validate the AU-East SKU framing (SKUs literally end in `_AUSTRALIA_EAST`):
 
-- **Dual currency (USD/AUD).** A header toggle restates every `$` figure across the estate: AUD = list-price USD × `fx_rate` (`app.yaml`, default `1.52`), clearly labelled indicative. USD is the default.
+- **Dual currency (USD/AUD).** A header toggle restates every `$` figure across the estate: AUD = USD × `fx_rate` (`app.yaml`, default `1.52`), after any `FINOPS_EFFECTIVE_DISCOUNT`, clearly labelled indicative. USD is the default.
 - **Cost by cost-driver (product).** A bar of total cost per `billing_origin_product` (SQL, Jobs, Interactive, DLT/Lakeflow, All-Purpose, Model Serving, AI Gateway, Predictive Optimization, Vector Search, Apps, Lakebase, Data Quality Monitoring). → Overview + Workspaces drill-down.
 - **Monthly trend — top-5 drivers.** A multi-line trend of the five biggest drivers over the last 6 months. → Overview + Workspaces.
 - **MoM spike detection.** A **driver-change-vs-prior-30-days (%)** bar; drivers up **≥ 25% MoM** fire a **cost-spike recommendation** (*investigate + attribute*) in the [Recommendations](#recommendations) hub. → Overview + Workspaces + recommendation catalogue trigger.
@@ -622,8 +622,8 @@ npm run build
 - **Demo data:** everything the UI shows in demo mode comes from `data/generate_demo.py` (seeded, deterministic). Edit the seed data there — the KPI rollups and recommendation feed recompute from it, so numbers stay reconciled across pages.
 - **Recommendation catalogue:** add or tune operator plays in `reference/recommendation_catalog.yaml` (24 plays × 6 categories). Each play declares its trigger, impact, effort, and feature pills; the hub matcher + scorer in `data/rec_hub.py` picks it up automatically.
 - **Feature flags:** flip `FINOPS_FEATURE_GENIE` / `FINOPS_FEATURE_AI_NARRATION` / `FINOPS_FEATURE_DQM` in `app.yaml` to pick a [deploy variant](#feature-flags--deploy-variants); hidden features are inert server-side. Set `genie_space_id` to point Ask Genie at your own Genie Space (blank ⇒ auto-create + auto-discover the FinOps Space in live; demo mode uses canned answers).
-- **Environments & grouping:** `FINOPS_ENV_TIERS` (tier ⇐ name tokens, e.g. `"Dev:dev;Test:tst|uat;Pre-prod:ppd;Prod:prd"`), `FINOPS_ENV_NONPROD_PATTERN` (extra regex), `FINOPS_WORKSPACE_GROUPS` (`"PREFIX:Label;…"`), `FINOPS_WORKLOAD_RULES` (`"regex:Bucket;…"`), `FINOPS_EFFECTIVE_DISCOUNT` (e.g. `0.30`), `FINOPS_TABLES_LIMIT` (tables read for the Tables tab, default 25,000). All optional; see `app.yaml`.
-- **Currency:** every page supports an AUD toggle alongside USD (list-price USD × `fx_rate` in `app.yaml`, clearly labelled).
+- **Environments & grouping:** `FINOPS_ENV_TIERS` (tier ⇐ name tokens, e.g. `"Dev:dev;Test:tst|uat;Pre-prod:ppd;Prod:prd"`), `FINOPS_ENV_NONPROD_PATTERN` (extra regex), `FINOPS_WORKSPACE_GROUPS` (`"PREFIX:Label;…"`), `FINOPS_WORKLOAD_RULES` (`"regex:Bucket;…"`), `FINOPS_EFFECTIVE_DISCOUNT` (e.g. `0.30`; every $ then shows effective cost), `FINOPS_TABLES_LIMIT` (tables read for the Tables tab, default 25,000). All optional; see `app.yaml`.
+- **Currency:** every page supports an AUD toggle alongside USD (USD × `fx_rate` in `app.yaml`, after any effective discount, clearly labelled).
 - **Theming:** CSS-var tokens in `frontend/src/index.css` + `frontend/tailwind.config.ts` (surface / card / border / accent, dark by default).
 
 ---

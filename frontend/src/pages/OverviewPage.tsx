@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { fetchOverview, fetchWorkspaceOptions } from "../api/client";
 import { useApi } from "../hooks/useApi";
-import { useAppStore, useCurrency } from "../store/appStore";
+import { priceBasis, useAppStore, useCurrency } from "../store/appStore";
 import { KpiCard } from "../components/kpi/KpiCard";
 import { KpiRow } from "../components/kpi/KpiRow";
 import { SpendSavingsChart } from "../components/charts/SpendSavingsChart";
@@ -55,14 +55,14 @@ export function OverviewPage() {
               label="Total spend / mo"
               value={fmtMoney(data.data.total_spend_usd_month, cur, { compact: true })}
               tone="accent"
-              hint={cur.code === "USD" ? "list price" : `list price × ${cur.rate} FX`}
+              hint={cur.code === "USD" ? priceBasis(cur) : `${priceBasis(cur)} × ${cur.fx} FX`}
               // Month-over-month change (like-for-like month-to-date). Rising
               // spend is the "bad" direction here, so tone it negative when up.
               delta={data.data.spend_mom_pct != null && Math.abs(data.data.spend_mom_pct) >= 0.005
                 ? { text: `${data.data.spend_mom_pct > 0 ? "+" : "−"}${fmtPct(Math.abs(data.data.spend_mom_pct))} MoM`,
                     tone: data.data.spend_mom_pct > 0 ? "negative" : "positive" }
                 : undefined}
-              info="Estimated monthly cost across all workspaces at list price (DBUs × effective price). Your headline cost-control number. The MoM delta compares this month-to-date against the same span of last month." />
+              info={`Estimated monthly cost across all workspaces (DBUs × list price${cur.discount > 0 ? `, less your ${fmtPct(cur.discount)} discount` : ""}). Your headline cost-control number. The MoM delta compares this month-to-date against the same span of last month.`} />
 
             <KpiCard
               label={data.data.savings_estimated ? "Savings potential (est.)" : "Savings potential"}
@@ -116,16 +116,19 @@ export function OverviewPage() {
                 : <span className="pill bg-border/50 text-neutral">list price</span>}
             </div>
             <p className="max-w-4xl">
-              Figures are <span className="font-medium text-brand-dark">list price</span> — Databricks DBUs × public list rate
-              from <code className="text-[11px]">system.billing.usage</code>
-              {cur.code !== "USD" && <> (× {cur.rate} FX for AUD, indicative)</>}.
               {effectiveDiscount > 0 ? (
-                <> Your configured effective rate applies a <span className="font-medium text-brand-dark">{fmtPct(effectiveDiscount)}</span> blended
-                  discount, so effective ≈ <span className="font-medium text-success">{fmtMoney(Math.round(data.data.total_spend_usd_month * (1 - effectiveDiscount)), cur, { compact: true })}/mo</span>
-                  {" "}vs {fmtMoney(data.data.total_spend_usd_month, cur, { compact: true })}/mo list.</>
+                <>Figures are <span className="font-medium text-brand-dark">effective cost</span>: Databricks DBUs × list rate
+                  from <code className="text-[11px]">system.billing.usage</code>, less your configured
+                  {" "}<span className="font-medium text-brand-dark">{fmtPct(effectiveDiscount)}</span> discount
+                  (<code className="text-[11px]">FINOPS_EFFECTIVE_DISCOUNT</code>)
+                  {cur.code !== "USD" && <>, × {cur.fx} FX for AUD (indicative)</>}.
+                  {" "}At list price this month would be {fmtMoney(data.data.total_spend_usd_month / (1 - effectiveDiscount), cur, { compact: true })}/mo.</>
               ) : (
-                <> To calibrate to your invoice, set your blended committed-use / reservation discount
-                  (<code className="text-[11px]">FINOPS_EFFECTIVE_DISCOUNT</code>) and every figure shows list <em>and</em> effective.</>
+                <>Figures are <span className="font-medium text-brand-dark">list price</span>: Databricks DBUs × public list rate
+                  from <code className="text-[11px]">system.billing.usage</code>
+                  {cur.code !== "USD" && <> (× {cur.fx} FX for AUD, indicative)</>}.
+                  {" "}To show your effective cost instead, set your blended committed-use discount
+                  (<code className="text-[11px]">FINOPS_EFFECTIVE_DISCOUNT</code>) and every figure in the app switches to it.</>
               )}
               {" "}<span className="font-medium text-brand-dark">Not included:</span> Azure VM / infrastructure cost — that lives in
               Azure Cost Management, not Databricks system tables, and must be reconciled there. This is the variance to expect

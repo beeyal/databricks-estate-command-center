@@ -86,6 +86,26 @@ WHERE result_state IS NOT NULL
 GROUP BY 1, 2
 """
 
+# Pipelines billed with a dlt_pipeline_id often have NO row in system.lakeflow.
+# pipelines (seen on large estates: thousands of billed pipelines, most of the
+# SQL-billed ones among them). Without a type they fell out of the MV / ST
+# summary, so a materialized view costing $10K+/mo showed as $0 there. When the
+# metadata has no type and the pipeline is billed under SQL, it's an MV / ST
+# refresh, so it gets this type instead of a blank.
+SQL_MV_ST = "SQL_MV_ST"
+MV_ST_TYPES = ("MATERIALIZED_VIEW", "STREAMING_TABLE", SQL_MV_ST)
+
+
+def infer_pipeline_type(meta_type: str, products: list[str]) -> str:
+    """The pipeline's type: the metadata value when there is one, else SQL_MV_ST
+    for a pipeline billed under the SQL product (an MV / ST refresh), else ""."""
+    if meta_type:
+        return meta_type
+    if any(str(p).upper() == "SQL" for p in products):
+        return SQL_MV_ST
+    return ""
+
+
 TYPE_LABEL = {
     "ETL_PIPELINE": "ETL pipeline",
     "MATERIALIZED_VIEW": "Materialized view (SQL)",
@@ -94,6 +114,9 @@ TYPE_LABEL = {
     "INGESTION_GATEWAY": "Lakeflow Connect gateway",
     "DATABASE_TABLE_SYNC": "Lakebase synced table",
     "METRIC_VIEW": "Metric view",
+    # No row in system.lakeflow.pipelines, but billed under SQL: a materialized
+    # view or streaming table refresh. Billing can't say which of the two it is.
+    SQL_MV_ST: "Materialized view / streaming table (SQL)",
 }
 TRIGGER_LABEL = {
     "JOB_TASK": "Job task",
@@ -192,18 +215,25 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "num_failing": sum(1 for r in rows if "failing" in r["reasons"]),
         "num_continuous": sum(1 for r in rows if r.get("continuous")),
         "num_spiking": sum(1 for r in rows if "cost-spike" in r["reasons"]),
-        "num_mv_st": sum(1 for r in rows if r["pipeline_type"] in ("MATERIALIZED_VIEW", "STREAMING_TABLE")),
+        "num_mv_st": sum(1 for r in rows if r["pipeline_type"] in MV_ST_TYPES),
         "mv_st_cost_usd_month": round(sum(r["cost_usd_month"] for r in rows
-                                          if r["pipeline_type"] in ("MATERIALIZED_VIEW", "STREAMING_TABLE")), 2),
+                                          if r["pipeline_type"] in MV_ST_TYPES), 2),
         "by_type": sorted(by_type.values(), key=lambda x: -x["cost_usd_month"]),
     }
 
 
 CAVEATS = [
-    "Cost is list price (usage × list_prices) over the trailing 30 days, summed across every billing product that carries this pipeline's id — Lakeflow pipelines, SQL materialized-view / streaming-table refreshes, Lakeflow Connect, Lakebase synced tables, Vector Search sync.",
+    "Cost is over the trailing 30 days, summed across every billing product that carries this pipeline's id — Lakeflow pipelines, SQL materialized-view / streaming-table refreshes, Lakeflow Connect, Lakebase synced tables, Vector Search sync.",
     "A pipeline run as a job task is ALSO counted on the Jobs tab (the same dollars, attributed to the job) — don't add the two tabs together.",
     "Updates, failures and the trigger come from system.lakeflow.pipeline_update_timeline (last 30 days); pipelines with no update history there show 0 updates.",
+    "Pipelines with no row in system.lakeflow.pipelines but billed under SQL are materialized-view / streaming-table refreshes; they're labelled from their billing so they still count towards the MV / ST total.",
 ]
+
+
+def caveats() -> list[str]:
+    """The caveats with the price-basis line for the current discount setting."""
+    from data.config import price_basis_note
+    return [price_basis_note(), *CAVEATS]
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +313,8 @@ def pipelines_live(warehouse_id: str) -> dict[str, Any]:
         rows.append(_build_row(
             pipeline_id=pid, workspace_id=ws, workspace=ws_names.get(ws, ws),
             bu=(bu_by_ws.get(ws, {}).get("bu") or "—"),
-            name=str(m.get("name") or ""), pipeline_type=str(m.get("pipeline_type") or ""),
+            name=str(m.get("name") or ""),
+            pipeline_type=infer_pipeline_type(str(m.get("pipeline_type") or ""), [str(p) for p in products]),
             owner=str(m.get("run_as") or m.get("created_by") or ""),
             cost=cost, prev=prev, dbus=live._f(c.get("dbus_30d")),
             serverless_cost=live._f(c.get("serverless_cost_30d")), products=[str(p) for p in products],
@@ -296,7 +327,9 @@ def pipelines_live(warehouse_id: str) -> dict[str, Any]:
             main_trigger=str(u.get("main_trigger") or ""), avg_update_s=live._f(u.get("avg_update_s")),
         ))
     rows.sort(key=lambda r: -r["cost_usd_month"])
-    return {"pipelines": rows, "message": "", "note": meta_note}
+    # type_inference marks a payload built with infer_pipeline_type, so app.py
+    # treats an older gold snapshot (MV / ST rows with a blank type) as a miss.
+    return {"pipelines": rows, "message": "", "note": meta_note, "type_inference": 1}
 
 
 # ---------------------------------------------------------------------------

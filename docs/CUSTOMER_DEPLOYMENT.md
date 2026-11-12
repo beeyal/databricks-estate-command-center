@@ -559,7 +559,7 @@ Use the same target you originally deployed (`-t customer` or `-t customer-delta
    | `FINOPS_WORKSPACE_GROUPS` | Roll workspaces up into broader platforms by name prefix, e.g. `"DATA-EDP-:EDP Core;FORE-:Forecasting"`. |
    | `FINOPS_PLATFORM_STRIP_WORDS` | Technology / region words dropped from the automatic platform name. Default `adb,dbw,databricks,aue,ase,aueast,ausoutheast,ause`; `"-"` keeps every word. |
    | `FINOPS_ENV_NONPROD_PATTERN` | An extra regex for names that are non-production but carry no environment word. |
-   | `FINOPS_EFFECTIVE_DISCOUNT` | Your blended discount (e.g. `"0.30"`), so figures show effective cost as well as list. |
+   | `FINOPS_EFFECTIVE_DISCOUNT` | Your blended Databricks discount (e.g. `"0.30"`). Every $ figure in the app then shows effective cost (list less the discount) instead of list price, and each page says which it shows. |
    | `FINOPS_WORKLOAD_RULES` | Steer job and pipeline names into Batch / Streaming / Interactive / ML-AI. |
 
    Two more are read if present but aren't in `app.yaml` by default: `FINOPS_PLATFORM_PATTERN`

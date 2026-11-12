@@ -1,7 +1,7 @@
 import { StatusPill } from "../shared/Pill";
 import { InfoTip } from "../shared/InfoTip";
 import { ProgressBar } from "../shared/ProgressBar";
-import { fmtMoney, fmtPct } from "../shared/format";
+import { fmtMoney, fmtMoneyText, fmtPct } from "../shared/format";
 import type { MoneyCurrency } from "../shared/format";
 import { useAppStore, useCurrency } from "../../store/appStore";
 import type { GovernancePageId, GovernanceTile, Status } from "../../types";
@@ -102,7 +102,7 @@ export function GovernanceTileCard({ tile }: { tile: GovernanceTile }) {
         <ProgressBar value={tile.value_pct ?? 0} tone={BAR_TONE[tile.status]} showPct={false} />
       )}
 
-      <div className="text-xs text-neutral">{tile.gap}</div>
+      <div className="text-xs text-neutral">{fmtMoneyText(tile.gap, cur)}</div>
 
       <div className="text-xs mt-1 pt-2 border-t border-border/60">
         <span className="text-neutral">Next: </span>

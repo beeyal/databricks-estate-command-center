@@ -174,7 +174,7 @@ export function WarehousesMonitorPage() {
 
           <div className="text-xs text-neutral -mt-1 flex items-center gap-1.5">
             Click a warehouse to drill into its hourly query volume, top users and query sources.
-            <InfoTip text="Metrics come from system.query.history (per-query durations, queued-at-capacity, spill) aggregated per warehouse. Cost is a list-price estimate. Serverless SQL is included; interactive-cluster SQL is on the Clusters tab." />
+            <InfoTip text="Metrics come from system.query.history (per-query durations, queued-at-capacity, spill) aggregated per warehouse. Cost is an estimate at list price, less any configured discount. Serverless SQL is included; interactive-cluster SQL is on the Clusters tab." />
           </div>
 
           {data?.truncated && (data?.total_active ?? 0) > 0 && (

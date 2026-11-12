@@ -27,6 +27,28 @@ export function fmtMoney(
   return `${s}${Math.round(n).toLocaleString("en-AU")}`;
 }
 
+// Restate dollar amounts that the backend wrote into text (recommendation
+// formulas, evidence chips, rationales, the AI summary). Those strings are built
+// in list-price USD, so without this they'd ignore the AUD toggle and the
+// effective discount that every other $ in the UI follows. Matches "$1,234",
+// "$12.5", "$40K", "$1.2M" (a "$" followed by a digit); leaves "$/DBU" etc alone.
+const MONEY_IN_TEXT = /\$((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)([KkMm](?![A-Za-z]))?/g;
+
+export function fmtMoneyText(text: string, cur: MoneyCurrency): string {
+  if (!text || (cur.rate === 1 && cur.symbol === "$")) return text;
+  return text.replace(MONEY_IN_TEXT, (_m, num: string, suffix: string | undefined) => {
+    let usd = parseFloat(num.replace(/,/g, ""));
+    if (!Number.isFinite(usd)) return _m;
+    const unit = (suffix || "").toUpperCase();
+    if (unit === "K") usd *= 1e3;
+    if (unit === "M") usd *= 1e6;
+    if (unit) return fmtMoney(usd, cur, { compact: true });
+    // Keep cents only where the source had them on a small amount (e.g. a $/DBU rate).
+    if (num.includes(".") && usd < 100) return `${cur.symbol}${(usd * cur.rate).toFixed(2)}`;
+    return fmtMoney(usd, cur);
+  });
+}
+
 export function fmtNum(n: number, opts: { compact?: boolean } = {}): string {
   if (!Number.isFinite(n)) return DASH;
   if (opts.compact) {

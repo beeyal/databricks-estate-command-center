@@ -61,8 +61,14 @@ CAVEATS = [
     "The 150 free DBUs / identified user / month are shared across all Genie surfaces. Live 'billable $' is usage above that free allowance; 'free absorbed' is the GENIE_FREE_USAGE portion (estate-wide). Demo mode illustrates a free-vs-paid split over synthetic totals, labelled as such.",
     "Budgets can target Genie (Unity AI Gateway + tag databricks-product:genie) but cannot be split by surface, and cannot remove the free tier. Best-practice budget-policy-at-scale guidance: see the Genie pricing FAQ (go/geniepricing or the Databricks FAQ doc).",
     "Consumption pricing from 6 Jul 2026, so figures read light until usage flows.",
-    "List-price reference (USD x pricing.effective_list.default); the Account Console is the source of truth.",
 ]
+
+
+def caveats() -> list[str]:
+    """The caveats with the price-basis line for the current discount setting.
+    Called at response time so a gold snapshot never carries a stale basis."""
+    from data.config import price_basis_note
+    return [*CAVEATS, price_basis_note()]
 
 # Per-user Genie activity seed: (user, workspace, {surface: dbus}) for the month.
 # Pre-allowance TOTAL DBUs. Engineers lean GENIE_CODE (in-editor); analysts lean
@@ -366,7 +372,7 @@ def assemble(gt_rows: list[dict[str, Any]], workspace: str | None = None,
             "num_workspaces": len({r["workspace"] for r in breakdown}),
             "num_surfaces": len(surface_totals),
         },
-        "caveats": CAVEATS,
+        "caveats": caveats(),
     }
 
 

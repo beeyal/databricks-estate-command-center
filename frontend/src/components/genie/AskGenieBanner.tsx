@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useGenieStream } from "../../hooks/useGenieStream";
+import { priceBasis, useCurrency } from "../../store/appStore";
+import { fmtMoney, fmtMoneyText } from "../shared/format";
 
 // Persistent "Ask Genie about your costs & usage" banner (SPEC §11). Rendered
 // beneath the nav ONLY when features.genie is on (App.tsx gates it). Streams
@@ -28,6 +30,9 @@ function SparkIcon() {
 }
 
 function AnswerChart({ chart }: { chart: { labels: string[]; values: number[]; unit: string } }) {
+  const cur = useCurrency();
+  // Dollar charts follow the active currency + discount like every other $.
+  const isMoney = /usd|\$/i.test(chart.unit);
   const max = Math.max(1, ...chart.values);
   // Guard against label/value arrays that arrive out of sync (backend contract
   // violation): only render rows that have a value, and default a missing cell
@@ -46,17 +51,18 @@ function AnswerChart({ chart }: { chart: { labels: string[]; values: number[]; u
             <div className="h-full rounded-full bg-accent" style={{ width: `${(v / max) * 100}%` }} />
           </div>
           <span className="w-24 shrink-0 text-right tabular-nums text-neutral">
-            {v.toLocaleString("en-AU")}
+            {isMoney ? fmtMoney(v, cur) : v.toLocaleString("en-AU")}
           </span>
         </div>
         );
       })}
-      <span className="text-[10px] uppercase tracking-wide text-neutral">{chart.unit}</span>
+      <span className="text-[10px] uppercase tracking-wide text-neutral">{isMoney ? `${cur.code}${/mo/i.test(chart.unit) ? " / mo" : ""}, ${priceBasis(cur)}` : chart.unit}</span>
     </div>
   );
 }
 
 export function AskGenieBanner() {
+  const cur = useCurrency();
   const [draft, setDraft] = useState("");
   const [activeQuestion, setActiveQuestion] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -185,8 +191,13 @@ export function AskGenieBanner() {
             ) : (
               <>
                 <div className="prose-genie text-sm leading-relaxed text-brand-dark [&_strong]:text-brand-dark [&_strong]:font-semibold">
-                  <ReactMarkdown>{stream.text}</ReactMarkdown>
+                  {/* Genie answers from the cost metric view at list price; restate the
+                      amounts in the active currency + discount like the rest of the app. */}
+                  <ReactMarkdown>{fmtMoneyText(stream.text, cur)}</ReactMarkdown>
                 </div>
+                {stream.done && cur.discount > 0 && /\$\d/.test(stream.text) && (
+                  <div className="text-[11px] text-neutral">Amounts are shown {priceBasis(cur)}; Genie itself works in list price.</div>
+                )}
                 {stream.meta?.chart && stream.meta.chart.values.length > 0 && (
                   <AnswerChart chart={stream.meta.chart} />
                 )}

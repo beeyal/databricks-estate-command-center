@@ -3,7 +3,7 @@ import { Metric } from "../shared/StatTile";
 import { QueryFlags } from "./QueryFlags";
 import { QueryRewritePanel } from "./QueryRewritePanel";
 import { CopyButton } from "../shared/CopyButton";
-import { fmtMoney, fmtBytes, fmtPct, fmtSeconds, fmtGb } from "../shared/format";
+import { fmtMoney, fmtMoneyText, fmtBytes, fmtPct, fmtSeconds, fmtGb } from "../shared/format";
 import { useCurrency, useFeatures } from "../../store/appStore";
 import type { QueryRow } from "../../types";
 
@@ -75,7 +75,7 @@ export function QueryDetail({ row }: { row: QueryRow }) {
           <span className="text-xs text-neutral">confidence {(row.confidence * 100).toFixed(0)}%</span>
           <span className="text-xs text-neutral">· impact {row.impact}/100</span>
         </div>
-        <p className="text-sm leading-relaxed">{row.rationale}</p>
+        <p className="text-sm leading-relaxed">{fmtMoneyText(row.rationale, cur)}</p>
 
         <div className="card bg-success/5 border-l-4 border-l-success py-2.5">
           <span className="text-[11px] uppercase tracking-wide text-neutral">Estimated savings</span>
